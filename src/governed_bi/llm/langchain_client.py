@@ -49,6 +49,9 @@ def _message_text(message: Any) -> str:
 
     Handles both a string ``content`` and the Responses-API content-block list
     (reasoning models), preferring the v1 ``.text`` accessor when present.
+
+    Note: reasoning trace is logged separately via LangSmith/tracing callbacks;
+    this function extracts only the final answer text.
     """
     text = getattr(message, "text", None)
     if isinstance(text, str):  # v1 exposes .text as a property returning str
@@ -62,7 +65,8 @@ def _message_text(message: Any) -> str:
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):  # list of content blocks
-        parts = [b.get("text", "") for b in content if isinstance(b, dict)]
+        # Extract text blocks only (reasoning traces go to observability)
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") != "thinking"]
         return "".join(parts).strip()
     return str(content).strip()
 
@@ -88,6 +92,7 @@ class LangChainChatClient:
         kwargs: dict[str, Any] = {"model": models.llm_model}
         if models.llm_reasoning_effort:
             # Reasoning models route to the Responses API via this dict.
+            # The reasoning trace is automatically included in the response
             kwargs["reasoning"] = {"effort": models.llm_reasoning_effort}
         if models.llm_max_output_tokens:
             kwargs["max_tokens"] = models.llm_max_output_tokens
