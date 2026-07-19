@@ -15,6 +15,39 @@ from __future__ import annotations
 import operator
 from typing import TYPE_CHECKING, Annotated
 
+
+def _coerce_ai_message(m: AIMessage) -> AIMessage:
+    """Return a copy of *m* keeping only the first tool_call.
+
+    Also strips extra toolUse blocks from the raw content list so that the
+    Bedrock Converse API sees exactly one toolUse block matching the one
+    tool_call we are keeping. Without this, Claude's content field may contain
+    all parallel toolUse blocks while tool_calls is trimmed to one — Bedrock
+    then complains that the subsequent toolResult blocks are incomplete.
+    """
+    kept_id = m.tool_calls[0].get("id") if m.tool_calls else None
+    content = m.content
+    if isinstance(content, list) and kept_id:
+        # LangChain represents tool_use blocks in content as {"type": "tool_use", "id": "...", ...}
+        content = [
+            block for block in content
+            if not (isinstance(block, dict) and block.get("type") == "tool_use")
+            or block.get("id") == kept_id
+        ]
+    return AIMessage(
+        content=content,
+        tool_calls=m.tool_calls[:1],
+        id=getattr(m, "id", None),
+        additional_kwargs=getattr(m, "additional_kwargs", {}) or {},
+    )
+
+
+def _supports_parallel_tool_calls(model: object) -> bool:
+    """Return False for Bedrock models, which reject parallel_tool_calls."""
+    m = getattr(model, "bound", model)
+    mod = type(m).__module__ or ""
+    return "bedrock" not in type(m).__name__.lower() and "bedrock" not in mod.lower()
+
 import sqlglot
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import AIMessage, ToolMessage
@@ -161,13 +194,10 @@ class GovernanceMiddleware(AgentMiddleware):
         # model_settings (survives create_agent's internal bind_tools); also
         # bind the model when supported.
         settings = dict(request.model_settings or {})
-        settings["parallel_tool_calls"] = False
         model = request.model
-        if hasattr(model, "bind"):
-            try:
-                model = model.bind(parallel_tool_calls=False)
-            except Exception:
-                pass
+        if hasattr(model, "bind") and _supports_parallel_tool_calls(model):
+            model = model.bind(parallel_tool_calls=False)
+            settings["parallel_tool_calls"] = False
         response = handler(request.override(model=model, model_settings=settings))
         return self._coerce_single_tool_call(response)
 
@@ -186,14 +216,7 @@ class GovernanceMiddleware(AgentMiddleware):
                     and getattr(m, "tool_calls", None)
                     and len(m.tool_calls) > 1
                 ):
-                    new_msgs.append(
-                        AIMessage(
-                            content=m.content,
-                            tool_calls=m.tool_calls[:1],
-                            id=getattr(m, "id", None),
-                            additional_kwargs=getattr(m, "additional_kwargs", {}) or {},
-                        )
-                    )
+                    new_msgs.append(_coerce_ai_message(m))
                     changed = True
                 else:
                     new_msgs.append(m)
@@ -208,12 +231,7 @@ class GovernanceMiddleware(AgentMiddleware):
             and getattr(response, "tool_calls", None)
             and len(response.tool_calls) > 1
         ):
-            return AIMessage(
-                content=response.content,
-                tool_calls=response.tool_calls[:1],
-                id=getattr(response, "id", None),
-                additional_kwargs=getattr(response, "additional_kwargs", {}) or {},
-            )
+            return _coerce_ai_message(response)
         return response
 
     def wrap_tool_call(self, request, handler):

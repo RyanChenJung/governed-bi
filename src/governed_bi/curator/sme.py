@@ -215,12 +215,16 @@ class SimulatedSme:
         )
         if self._agent is not None:
             from ..obs import tracing_callbacks
+            from langgraph.errors import GraphRecursionError
 
-            result = self._agent.invoke(
-                {"messages": [{"role": "user", "content": user}]},
-                config={"recursion_limit": 40, "callbacks": tracing_callbacks()},
-            )
-            raw = _last_message_text(result)
+            try:
+                result = self._agent.invoke(
+                    {"messages": [{"role": "user", "content": user}]},
+                    config={"recursion_limit": 40, "callbacks": tracing_callbacks()},
+                )
+                raw = _last_message_text(result)
+            except GraphRecursionError:
+                raw = self.chat.complete(self.brief, user)
         else:
             raw = self.chat.complete(self.brief, user)
         return _sanitize_sme_answer(raw)

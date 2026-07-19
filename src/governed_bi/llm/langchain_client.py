@@ -178,6 +178,44 @@ class LangChainEmbedder:
 def _build_bedrock_chat(models: "ModelConfig") -> Any:
     _require_langchain_aws()
     from langchain_aws import ChatBedrockConverse  # noqa: PLC0415 (lazy: bedrock extra)
+    from langchain_core.messages import AIMessage, ToolMessage  # noqa: PLC0415
+
+    class _SanitizedBedrockConverse(ChatBedrockConverse):
+        """Patches message history before sending to Bedrock.
+
+        Bedrock Converse requires every tool_use block in an assistant message to
+        have a corresponding toolResult in the immediately following user message.
+        LangGraph's message reducers can occasionally produce dangling tool_calls
+        (e.g. when a sub-graph stops mid-turn). This subclass fills those gaps with
+        a synthetic cancelled ToolMessage so Bedrock validation passes.
+        """
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # type: ignore[override]
+            messages = _patch_dangling_tool_calls(messages)
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    def _patch_dangling_tool_calls(messages):
+        answered: set[str] = {
+            m.tool_call_id
+            for m in messages
+            if isinstance(m, ToolMessage) and m.tool_call_id
+        }
+        patched = []
+        for msg in messages:
+            patched.append(msg)
+            if not isinstance(msg, AIMessage):
+                continue
+            for tc in msg.tool_calls:
+                if tc.get("id") and tc["id"] not in answered:
+                    patched.append(
+                        ToolMessage(
+                            content="(cancelled — tool call was not completed)",
+                            name=tc.get("name", "unknown"),
+                            tool_call_id=tc["id"],
+                        )
+                    )
+                    answered.add(tc["id"])
+        return patched
 
     kwargs: dict[str, Any] = {"model": models.llm_model}
     if models.region:
@@ -193,7 +231,7 @@ def _build_bedrock_chat(models: "ModelConfig") -> Any:
     # Converse request field differs between Anthropic and Nova — so it is not
     # auto-translated from ``llm_reasoning_effort`` here. Set it per deployment
     # via a local overlay if a specific model needs it.
-    return ChatBedrockConverse(**kwargs)
+    return _SanitizedBedrockConverse(**kwargs)
 
 
 def _build_bedrock_embeddings(models: "ModelConfig") -> Any:

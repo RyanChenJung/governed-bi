@@ -24,6 +24,7 @@ from ..corpus.schemas import TableAsset
 from ..gateway import column_allowlist
 from ..graph import build_graph, detect_missing_join_path, plan_joins
 from ..obs import tracing_callbacks
+from .middleware import _supports_parallel_tool_calls
 from ..retrieval import (
     embed_schema_documents,
     expand_schemas_via_curated_joins,
@@ -197,11 +198,8 @@ def build_agent_core(
     )
     # Sequential tools: also bind at construction; middleware re-asserts per call (G1).
     bound_model = model
-    if hasattr(model, "bind") and not isinstance(getattr(model, "responses", None), list):
-        try:
-            bound_model = model.bind(parallel_tool_calls=False)
-        except Exception:
-            bound_model = model
+    if hasattr(model, "bind") and _supports_parallel_tool_calls(model):
+        bound_model = model.bind(parallel_tool_calls=False)
     return create_agent(
         model=bound_model,
         tools=tools,
