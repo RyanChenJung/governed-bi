@@ -336,3 +336,27 @@ class EditResponse(BaseModel):
     path: str | None  # repo-relative path written (null when not written)
     findings: list[str]  # reference-integrity findings (empty = clean)
     diff: str  # unified diff of the YAML file (old vs new)
+
+
+# ── clarifications (admin HITL over the curator's clarifications.jsonl) ──── #
+class ClarificationResponse(_View):
+    id: str
+    scope: str
+    question: str
+    status: str  # "open" | "answered"
+    raised_by: list[str]
+    choices: list[dict[str, str]] | None  # each: {"id": ..., "label": ...}
+    allow_freeform: bool
+    answer: str | None
+    answer_choice_id: str | None
+    answered_by: str | None
+
+
+class ClarificationAnswerRequest(BaseModel):
+    """Body for ``POST /clarifications/{id}/answer``. Either field may be set;
+    at least one is required (enforced in the route, not here, so the 422 vs
+    400 distinction stays in one place)."""
+
+    choice_id: str | None = None
+    answer: str | None = None
+    answered_by: str = "admin"

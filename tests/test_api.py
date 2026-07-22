@@ -521,3 +521,88 @@ def test_column_related_resolves_fk_and_joins(client):
 
 def test_column_related_unknown_is_404(client):
     assert client.get("/columns/col_does_not_exist/related").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# clarifications (admin HITL over clarifications.jsonl; POST gated on can_edit)
+# --------------------------------------------------------------------------- #
+
+_FIXTURE_RECORDS = [
+    {
+        "id": "q001",
+        "scope": "term:revenue",
+        "question": "When you say 'revenue', which table/column does that map to?",
+        "choices": [
+            {"id": "c1", "label": "payments.amount"},
+            {"id": "c2", "label": "line_items.unit_price"},
+            {"id": "c3", "label": "line_items.unit_price - line_items.discount"},
+        ],
+        "allow_freeform": False,
+    },
+    {
+        "id": "q002",
+        "scope": "rule:fiscal_year_start",
+        "question": "What month does your fiscal year start?",
+        "choices": [
+            {"id": "jan", "label": "Jan"},
+            {"id": "apr", "label": "Apr"},
+            {"id": "jul", "label": "Jul"},
+            {"id": "oct", "label": "Oct"},
+        ],
+        "allow_freeform": True,
+    },
+]
+
+
+def _clarifications_client(tmp_path, **flags):
+    from governed_bi.curator.clarifications import ClarificationRecord, write_clarifications
+
+    stack = replace(build_stack(), corpus_root=tmp_path, **flags)
+    write_clarifications(
+        tmp_path / "clarifications.jsonl",
+        [ClarificationRecord.model_validate(r) for r in _FIXTURE_RECORDS],
+    )
+    return TestClient(create_app(stack))
+
+
+def test_list_clarifications_filters_by_status(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.get("/clarifications", params={"status": "open"})
+    assert r.status_code == 200
+    ids = {rec["id"] for rec in r.json()}
+    assert ids == {"q001", "q002"}
+
+
+def test_answer_clarification_with_choice(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.post("/clarifications/q001/answer", json={"choice_id": "c1"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "answered"
+    assert body["answer_choice_id"] == "c1"
+    assert body["answered_by"] == "admin"
+    # persisted: a fresh GET reflects the write
+    again = client.get("/clarifications", params={"status": "open"}).json()
+    assert {rec["id"] for rec in again} == {"q002"}
+
+
+def test_answer_clarification_with_freeform(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.post("/clarifications/q002/answer", json={"answer": "Apr (custom: mid-quarter)"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "Apr (custom: mid-quarter)"
+
+
+def test_answer_clarification_disabled_returns_403(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=False, edit_mode=None)
+    assert client.post("/clarifications/q001/answer", json={"choice_id": "c1"}).status_code == 403
+
+
+def test_answer_clarification_unknown_id_is_404(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    assert client.post("/clarifications/q999/answer", json={"answer": "x"}).status_code == 404
+
+
+def test_answer_clarification_requires_choice_or_answer(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    assert client.post("/clarifications/q001/answer", json={}).status_code == 422

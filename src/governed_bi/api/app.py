@@ -28,6 +28,8 @@ from .schemas import (
     AssetTypeFilter,
     CapabilitiesResponse,
     ChatRequest,
+    ClarificationAnswerRequest,
+    ClarificationResponse,
     ColumnIdentityResponse,
     ColumnRefResponse,
     ColumnRelatedMetaResponse,
@@ -410,6 +412,57 @@ def create_app(stack: ServeStack | None = None):
             findings=[],
             diff=diff,
         )
+
+    @app.get("/clarifications", response_model=list[ClarificationResponse], tags=["clarifications"])
+    def clarifications(
+        status: str | None = Query(None, description="Filter by record status, e.g. 'open'"),
+    ) -> list[ClarificationResponse]:
+        """The curator's SME clarification ledger (``clarifications.jsonl``), for
+        an admin to answer. ``status`` filters (default: all records)."""
+        from ..curator.clarifications import clarifications_path, load_clarifications
+
+        records = load_clarifications(clarifications_path(stack.corpus_root))
+        if status is not None:
+            records = [r for r in records if r.status.value == status]
+        return [ClarificationResponse.model_validate(r) for r in records]
+
+    @app.post(
+        "/clarifications/{clarification_id}/answer",
+        response_model=ClarificationResponse,
+        tags=["clarifications"],
+    )
+    def answer_clarification(
+        clarification_id: str, req: ClarificationAnswerRequest
+    ) -> ClarificationResponse:
+        """Record an admin's answer to one open clarification (dev, gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``). 404 on an unknown id."""
+        from ..curator.clarifications import (
+            ClarificationRecordStatus,
+            clarifications_path,
+            load_clarifications,
+            write_clarifications,
+        )
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+        if req.choice_id is None and req.answer is None:
+            raise HTTPException(status_code=422, detail="one of choice_id or answer is required")
+
+        path = clarifications_path(stack.corpus_root)
+        records = load_clarifications(path)
+        for i, rec in enumerate(records):
+            if rec.id == clarification_id:
+                records[i] = rec.model_copy(
+                    update={
+                        "status": ClarificationRecordStatus.answered,
+                        "answer": req.answer,
+                        "answer_choice_id": req.choice_id,
+                        "answered_by": req.answered_by,
+                    }
+                )
+                write_clarifications(path, records)
+                return ClarificationResponse.model_validate(records[i])
+        raise HTTPException(status_code=404, detail="unknown clarification id")
 
     @app.post("/chat", response_model=AnswerResponse, tags=["chat"])
     def chat(req: ChatRequest) -> AnswerResponse:
