@@ -34,6 +34,7 @@ class ClarificationRecord(BaseModel):
     answer: str | None = None
     answer_choice_id: str | None = None
     answered_by: str | None = None
+    converted_to_corpus: bool = False
 
 
 CLARIFICATIONS_FILENAME = "clarifications.jsonl"
@@ -216,6 +217,26 @@ def fill_clarifications_with_responder(
             )
         )
     return out
+
+
+def resolve_answer_text(rec: ClarificationRecord) -> str | None:
+    """Resolve a record's structured answer into the text a corpus fold writes.
+
+    A picked choice's ``label`` is the primary text (a freeform ``answer`` set
+    alongside it — e.g. the C-type "picked a choice AND added freeform
+    context" shape — is appended for context). With no choice picked, the
+    freeform ``answer`` is used as-is. Returns ``None``/empty when the record
+    carries neither.
+    """
+    label: str | None = None
+    if rec.answer_choice_id and rec.choices:
+        for choice in rec.choices:
+            if choice.get("id") == rec.answer_choice_id:
+                label = choice.get("label")
+                break
+    if label and rec.answer:
+        return f"{label} — {rec.answer}"
+    return label or rec.answer
 
 
 def parse_scope(scope: str) -> tuple[str, str | None]:

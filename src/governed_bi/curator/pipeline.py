@@ -31,6 +31,8 @@ from .clarifications import (
     clarifications_path,
     fill_clarifications_with_responder,
     load_clarifications,
+    parse_scope,
+    resolve_answer_text,
     seed_gap_clarifications,
     write_clarifications,
 )
@@ -761,3 +763,76 @@ def build_curated_corpus_with_sme(
             f"curated_sme corpus is identical to curated at {out_root}; SME round-trip produced no edits"
         )
     return out_root
+
+
+def apply_answered_clarifications_to_corpus(corpus_root: Path | str, schema: str) -> int:
+    """Poll step: fold ledger records answered outside the SME fill loop into
+    an already-served corpus.
+
+    ``fill_clarifications_with_responder`` (and the deterministic fold in
+    ``build_curated_corpus_with_sme``) only pick up records answered
+    synchronously in that same call. A human admin answering later via
+    ``POST /clarifications/{id}/answer`` (see ``api/app.py``) just rewrites
+    ``clarifications.jsonl`` in place — nothing re-reads it afterwards. This
+    scans that ledger under ``corpus_root`` for ``answered`` records not yet
+    ``converted_to_corpus``, folds them into ``corpus_root``'s ``schema``
+    subtree via the same :meth:`AssetBag.apply_answered_clarifications` /
+    :meth:`AssetBag.record_caveats` logic the SME path uses, writes the
+    updated corpus assets, and marks the folded records
+    ``converted_to_corpus=True`` so re-running is a no-op. Returns the number
+    of records folded.
+    """
+    from ..corpus.loader import load_corpus
+    from ..corpus.schemas import TableAsset
+
+    corpus_root = Path(corpus_root)
+    ledger_path = clarifications_path(corpus_root)
+    records = load_clarifications(ledger_path)
+    pending = [
+        r
+        for r in records
+        if r.status is ClarificationRecordStatus.answered and not r.converted_to_corpus
+    ]
+    if not pending:
+        return 0
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    tables = [a for a in corpus.assets if isinstance(a, TableAsset)]
+    other = [a for a in corpus.assets if not isinstance(a, TableAsset)]
+
+    bag = AssetBag.from_tables(schema, tables)
+    for asset in other:
+        if asset.asset_type == "join":
+            bag.joins[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "metric":
+            bag.metrics[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "term":
+            bag.terms[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "few_shot":
+            bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "rule":
+            bag.rules[asset.id] = asset  # type: ignore[assignment]
+
+    applied = bag.apply_answered_clarifications(pending)
+    caveats = bag.record_caveats(pending)
+    if applied or caveats:
+        bag.write(corpus_root)
+
+    def _folded(rec: ClarificationRecord) -> bool:
+        if not resolve_answer_text(rec):
+            return False
+        try:
+            table, _column = parse_scope(rec.scope)
+        except ValueError:
+            return True  # non-asset scope -> folded as a caveat rule above
+        return table in bag.tables
+
+    pending_ids = {rec.id for rec in pending if _folded(rec)}
+    if not pending_ids:
+        return applied + caveats
+    updated = [
+        rec.model_copy(update={"converted_to_corpus": True}) if rec.id in pending_ids else rec
+        for rec in records
+    ]
+    write_clarifications(ledger_path, updated)
+    return applied + caveats

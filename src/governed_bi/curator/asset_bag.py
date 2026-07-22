@@ -27,7 +27,12 @@ from ..corpus.schemas import (
     TermAsset,
 )
 from ..corpus.serialize import write_corpus
-from .clarifications import ClarificationRecord, ClarificationRecordStatus, parse_scope
+from .clarifications import (
+    ClarificationRecord,
+    ClarificationRecordStatus,
+    parse_scope,
+    resolve_answer_text,
+)
 
 _Asset = TableAsset | JoinAsset | MetricAsset | TermAsset | FewShotAsset | RuleAsset
 
@@ -555,7 +560,8 @@ class AssetBag:
         for rec in records:
             if rec.status is not ClarificationRecordStatus.answered:
                 continue
-            if not rec.answer:
+            text = resolve_answer_text(rec)
+            if not text:
                 continue
             try:
                 table, column = parse_scope(rec.scope)
@@ -565,7 +571,7 @@ class AssetBag:
             if column is None:
                 msg = self.annotate_table(
                     table,
-                    description=rec.answer,
+                    description=text,
                     confidence=0.9,
                     certified=True,
                     answered_by=by,
@@ -574,7 +580,7 @@ class AssetBag:
                 msg = self.annotate_column(
                     table,
                     column,
-                    description=rec.answer,
+                    description=text,
                     confidence=0.9,
                     certified=True,
                     answered_by=by,
@@ -623,7 +629,10 @@ class AssetBag:
         """
         n = 0
         for rec in records:
-            if rec.status is not ClarificationRecordStatus.answered or not rec.answer:
+            if rec.status is not ClarificationRecordStatus.answered:
+                continue
+            text = resolve_answer_text(rec)
+            if not text:
                 continue
             try:
                 parse_scope(rec.scope)  # table:/column: scopes are handled by the fold
@@ -631,7 +640,7 @@ class AssetBag:
             except ValueError:
                 pass  # non-asset scope (pair:/query:/…) → record as a caveat
             msg = self.propose_rule(
-                rec.answer,
+                text,
                 kind=RuleKind.context,
                 certified=True,
                 answered_by=rec.answered_by or "sme",

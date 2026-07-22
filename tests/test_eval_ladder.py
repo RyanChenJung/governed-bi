@@ -339,6 +339,111 @@ def test_build_curated_corpus_with_sme_folds_human(bird_connector, tmp_path: Pat
     assert manifest["agent_ran"] is False
 
 
+def test_apply_answered_clarifications_to_corpus_matches_sme_fold(tmp_path: Path):
+    """Round 3: an admin answering via the human-facing API
+    (``POST /clarifications/{id}/answer``) just rewrites clarifications.jsonl
+    in place — nothing re-reads it. ``apply_answered_clarifications_to_corpus``
+    is the poll step that picks those records up and folds them into an
+    already-served corpus, reusing the same ``AssetBag`` fold the
+    SimulatedSme path uses. This checks both a freeform-answered record and a
+    choice-answered record, and confirms the freeform one lands in the exact
+    same format the existing SimulatedSme/deterministic fold produces.
+    """
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+
+    def _table(name: str) -> TableAsset:
+        return TableAsset(
+            id=f"tbl_{schema}_{name}",
+            schema=schema,
+            physical_name=name,
+            columns=[
+                Column(
+                    physical_name="amount",
+                    physical_type="DECIMAL",
+                    logical_type=LogicalType.decimal,
+                    nullable=True,
+                    is_unique=False,
+                )
+            ],
+        )
+
+    orders = _table("orders")
+    customers = _table("customers")
+
+    # Freeform record, as SimulatedSme's fill_clarifications_with_responder
+    # would produce it.
+    freeform_rec = ClarificationRecord(
+        id="q001",
+        scope="table:orders",
+        question="What is `orders`?",
+        status=ClarificationRecordStatus.answered,
+        answer="Customer purchase orders.",
+        answered_by="sme",
+    )
+    # Reference: what the EXISTING deterministic fold (used by
+    # build_curated_corpus_with_sme when model=None) produces for that record.
+    reference_bag = AssetBag.from_tables(schema, [orders.model_copy(deep=True)])
+    reference_bag.apply_answered_clarifications([freeform_rec])
+    reference_table = reference_bag.tables["orders"]
+
+    # Choice-answered record, as it would arrive via the human-facing API
+    # (choice_id only — no freeform "answer" text).
+    choice_rec = ClarificationRecord(
+        id="q002",
+        scope="table:customers",
+        question="What is `customers`?",
+        choices=[
+            {"id": "opt_a", "label": "Customers who bought root beer."},
+            {"id": "opt_b", "label": "Customers who bought ginger beer."},
+        ],
+        allow_freeform=False,
+        status=ClarificationRecordStatus.answered,
+        answer_choice_id="opt_a",
+        answered_by="admin",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders, customers])
+    write_clarifications(
+        clarifications_path(corpus_root), [freeform_rec, choice_rec]
+    )
+
+    applied = apply_answered_clarifications_to_corpus(corpus_root, schema)
+    assert applied == 2
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    tables = {a.physical_name: a for a in corpus.tables()}
+
+    # Freeform answer: exact format parity with the existing SimulatedSme
+    # deterministic-fold path.
+    folded_orders = tables["orders"]
+    assert folded_orders.description == reference_table.description
+    assert folded_orders.confidence == reference_table.confidence
+    assert folded_orders.audit.provenance.source == reference_table.audit.provenance.source
+    assert folded_orders.audit.provenance.status == reference_table.audit.provenance.status
+    assert folded_orders.audit.provenance.by == reference_table.audit.provenance.by == "sme"
+
+    # Choice answer: the picked choice's label becomes the corpus fact text.
+    folded_customers = tables["customers"]
+    assert folded_customers.description == "Customers who bought root beer."
+    assert folded_customers.audit.provenance.by == "admin"
+
+    # Idempotent: both records are marked converted; re-running folds nothing.
+    records = load_clarifications(clarifications_path(corpus_root))
+    assert all(r.converted_to_corpus for r in records)
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
+
+
 def test_deep_agent_invoke_receives_tracing_callbacks(bird_connector, tmp_path: Path, monkeypatch):
     """The curator deep agent must run with Langfuse callbacks in its config, or
     its (majority) LLM volume is invisible to the dashboard. Regression guard."""
