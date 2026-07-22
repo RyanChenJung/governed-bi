@@ -118,8 +118,14 @@ def test_routes_app_advertises_streaming():
     # routes.py is only mounted on the LangGraph server (which fronts the chat
     # graph), so it flips can_stream on.
     from governed_bi.api.routes import app as routes_app
+    from governed_bi.api.stack import build_stack
 
-    assert TestClient(routes_app).get("/capabilities").json()["can_stream"] is True
+    body = TestClient(routes_app).get("/capabilities").json()
+    assert body["can_stream"] is True
+    # can_clarify depends on can_stream (see stack.build_stack) — must be
+    # recomputed against the forced-True can_stream here, not left at
+    # build_stack()'s stale REST-default (can_stream=False) value.
+    assert body["can_clarify"] is build_stack().has_live_model
 
 
 def test_health_is_green(client):
