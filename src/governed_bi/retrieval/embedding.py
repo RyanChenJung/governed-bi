@@ -43,11 +43,27 @@ class EmbeddingIndex:
 
 
 def build_embedding_index(corpus: "Corpus", embedder: "Embedder") -> EmbeddingIndex:
-    """Embed one document per asset (the same text BM25 indexes) into an index."""
-    ids = [a.id for a in corpus.assets]
-    docs = [asset_document(a) for a in corpus.assets]
-    vectors = embedder.embed(docs)
-    return EmbeddingIndex(dict(zip(ids, vectors)))
+    """Embed one document per asset (the same text BM25 indexes) into an index.
+
+    Asset types with no language surface (e.g. ``join``, per
+    :func:`asset_document`) produce an empty document. BM25 tolerates that (an
+    empty doc just never matches), but some live embedding providers (e.g.
+    Bedrock Titan) reject an empty-string input outright. Route only the
+    non-empty documents to the embedder, then backfill a zero vector for the
+    rest — every asset still gets an entry (so it never ranks, cosine 0.0,
+    same as BM25's "never match"), but nothing empty reaches the embedder.
+    """
+    pairs = [(a.id, asset_document(a)) for a in corpus.assets]
+    non_empty = [(aid, doc) for aid, doc in pairs if doc]
+    ids = [aid for aid, _ in non_empty]
+    docs = [doc for _, doc in non_empty]
+    vectors = embedder.embed(docs) if docs else []
+    index = dict(zip(ids, vectors))
+    dim = len(next(iter(index.values()))) if index else 0
+    for aid, doc in pairs:
+        if not doc:
+            index[aid] = [0.0] * dim
+    return EmbeddingIndex(index)
 
 
 def fuse_rankings(
