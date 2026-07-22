@@ -29,7 +29,10 @@ class ClarificationRecord(BaseModel):
     question: str
     status: ClarificationRecordStatus = ClarificationRecordStatus.open
     raised_by: list[str] = Field(default_factory=list)
+    choices: list[dict[str, str]] | None = None
+    allow_freeform: bool = True
     answer: str | None = None
+    answer_choice_id: str | None = None
     answered_by: str | None = None
 
 
