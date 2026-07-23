@@ -102,11 +102,18 @@ def _record_live_clarification_answer(
     declined: bool,
     deferred: bool = False,
     answer: str,
+    corpus: "Corpus | None" = None,
 ) -> None:
     """After ``interrupt`` returns, sync the ledger record with what actually
     happened live: answered records get the answer; a decline or a defer both
     leave the record ``open`` (still homework — nothing was actually resolved,
-    an admin can answer it later)."""
+    an admin can answer it later).
+
+    Also folds the answer into the corpus immediately (same as the API's
+    ``POST /clarifications/{id}/answer`` route, round 10) — otherwise an
+    answer picked live in the chat never produces an Agreed Assumption, only
+    one submitted later from the offline admin tab does.
+    """
     if corpus_root is None or declined or deferred:
         return
     from ..curator.clarifications import (
@@ -129,7 +136,31 @@ def _record_live_clarification_answer(
             }
         )
         write_clarifications(path, records)
+        _fold_answered_clarifications(corpus_root, corpus)
         return
+
+
+def _fold_answered_clarifications(corpus_root: "Path", corpus: "Corpus | None") -> None:
+    """Best-effort: run the round-10 poll step for every schema this corpus
+    covers. Errors are logged, not raised — the ledger write above already
+    durably saved the answer regardless of whether folding succeeds."""
+    if corpus is None:
+        return
+    import logging
+
+    from ..curator.pipeline import apply_answered_clarifications_to_corpus
+
+    logger = logging.getLogger("governed_bi.analyst")
+    schemas = {a.schema for a in corpus.assets if isinstance(a, TableAsset)}
+    for schema in schemas:
+        try:
+            apply_answered_clarifications_to_corpus(corpus_root, schema)
+        except Exception:
+            logger.exception(
+                "auto-fold of a live-chat-answered clarification into schema %r failed; "
+                "the answer is saved but not yet reflected as an Agreed Assumption",
+                schema,
+            )
 
 
 def _is_excluded(asset: Any) -> bool:
@@ -474,6 +505,7 @@ def make_tools(
             declined=parsed["declined"],
             deferred=parsed["deferred"],
             answer=answer,
+            corpus=corpus,
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED
