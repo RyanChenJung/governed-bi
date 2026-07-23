@@ -419,6 +419,15 @@ class NoteAsset(_Strict):
     source_question: str | None = None
     source_kind: str | None = None  # "curator" | "live_chat", mirrors ClarificationRecord.source
 
+    # ── Round C: a clarification whose Enhancer decision flagged conflict_with
+    # ── an existing NoteAsset/MetricAsset gets folded as one of these instead of
+    # silently dropped. ``related_notes`` (pre-existing, previously unused) holds
+    # the conflicting asset's id; ``conflict_status`` tracks the human resolution.
+    # ``None`` for every note created through any other path.
+    conflict_status: Literal["unresolved", "resolved_kept_existing", "resolved_replaced"] | None = (
+        None
+    )
+
     # ── Governance (NEW vs. RuleAsset; closes a latent D6 gap) ──
     governance: Governance | None = None
 

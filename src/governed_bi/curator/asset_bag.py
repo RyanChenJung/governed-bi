@@ -15,6 +15,7 @@ from ..corpus.schemas import (
     ColumnRole,
     Complexity,
     FewShotAsset,
+    Governance,
     JoinAsset,
     MetricAsset,
     NoteAsset,
@@ -792,12 +793,14 @@ class AssetBag:
             counts.duplicate += 1
             return
         if decision.conflict_with and decision.conflict_with in known_ids:
+            msg = self._record_conflict(rec, answered_by, decision)
             logger.warning(
                 "clarification %s CONFLICTS with existing asset %s ('%s'); not overwriting "
-                "— flagged for human review (Round C)",
+                "— recorded as an unresolved conflict for human review (%s)",
                 rec.id,
                 decision.conflict_with,
                 decision.generalized_definition,
+                msg,
             )
             counts.conflict += 1
             return
@@ -833,6 +836,156 @@ class AssetBag:
         )
         if msg.startswith("ok:"):
             counts.created += 1
+
+    def _record_conflict(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+    ) -> str:
+        """Round C: persist a clarification whose Enhancer decision flagged
+        ``conflict_with`` an existing ``NoteAsset``/``MetricAsset``, instead of
+        silently dropping it (the pre-Round-C behavior — see
+        ``_apply_enhancer_decision``).
+
+        Written as a ``NoteAsset`` with ``publication_status`` left at
+        ``proposed`` (never ``certified``) AND ``governance.excluded=True``.
+        The latter is what actually matters for keeping it out of the Analyst's
+        prompt: ``analyst/note_inject.select_notes_for_injection`` does not gate
+        on ``publication_status`` at all (only ``apply_always_budget`` uses it,
+        for *ordering*, not exclusion) — ``governance.excluded`` is the one field
+        that resolver checks and skips unconditionally. Belt-and-suspenders:
+        ``publication_status=proposed`` still keeps this out of anything that
+        DOES key off publication status (e.g. a future "certified only" view).
+
+        ``related_notes`` (pre-existing NoteAsset field, unused until now) holds
+        the id of the asset this conflicts with. ``conflict_status="unresolved"``
+        marks it as awaiting an admin decision (see :meth:`resolve_conflict`).
+        When the new answer is itself metric-shaped, ``body`` carries
+        ``base_table=``/``expression=`` lines so a later "replace" resolution
+        can update a conflicting MetricAsset's definition, not just a NoteAsset's
+        text — reusing the existing free-text ``body`` field rather than adding
+        a metric-shaped schema onto NoteAsset.
+        """
+        body = None
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            body = f"base_table={decision.base_table}\nexpression={decision.expression}"
+        base_id = f"note_{_slug(self.schema)}_{_slug(decision.concept_name)}_conflict"
+        note_id = base_id
+        suffix = 2
+        while note_id in self.notes:
+            note_id = f"{base_id}_{suffix}"
+            suffix += 1
+        audit = _inference_audit(
+            model=self.model_name,
+            source=ProvenanceSource.human,
+            status=ProvenanceStatus.proposed,
+            by=answered_by,
+            built_at=_now_iso(),
+        )
+        try:
+            asset = NoteAsset.model_validate(
+                {
+                    "id": note_id,
+                    "kind": NoteKind.context,
+                    "summary": decision.generalized_definition,
+                    "body": body,
+                    "confidence": 0.5,
+                    "publication_status": ProvenanceStatus.proposed,
+                    "source_question": rec.question,
+                    "source_kind": rec.source,
+                    "related_notes": [decision.conflict_with],
+                    "conflict_status": "unresolved",
+                    "governance": Governance(
+                        excluded=True,
+                        reason=(
+                            f"unresolved conflict with {decision.conflict_with}; "
+                            "awaiting admin review"
+                        ),
+                    ),
+                    "audit": audit,
+                }
+            )
+        except ValidationError as err:
+            return f"error: invalid conflict NoteAsset: {err}"
+        self.notes[note_id] = asset
+        return f"ok: wrote {note_id}"
+
+    def resolve_conflict(
+        self,
+        conflict_note_id: str,
+        resolution: str,
+        *,
+        answered_by: str | None = None,
+    ) -> str:
+        """Round C admin resolution action for a note written by
+        :meth:`_record_conflict`.
+
+        ``resolution="keep_existing"``: the conflict is discarded — the
+        conflicting asset is left untouched, and the conflict note is marked
+        resolved (its ``governance.excluded`` stays ``True`` forever; it never
+        becomes visible to the Analyst either way).
+
+        ``resolution="replace"``: the asset named in the conflict note's
+        ``related_notes[0]`` is updated to the conflict note's definition
+        (``summary`` for a ``NoteAsset``; ``base_table``/``expression`` parsed
+        from ``body`` for a ``MetricAsset``) and certified — the same
+        certified-human-provenance shape :meth:`_audit` gives any other
+        admin-answered fold.
+        """
+        note = self.notes.get(conflict_note_id)
+        if note is None:
+            return f"error: unknown conflict note id={conflict_note_id!r}"
+        if note.conflict_status != "unresolved":
+            return (
+                f"error: conflict {conflict_note_id!r} is already resolved "
+                f"({note.conflict_status})"
+            )
+        if resolution not in ("keep_existing", "replace"):
+            return f"error: invalid resolution={resolution!r} (expected keep_existing/replace)"
+
+        if resolution == "replace":
+            target_id = note.related_notes[0] if note.related_notes else None
+            if target_id is None:
+                return "error: conflict note has no related_notes target to replace"
+            new_audit = self._audit(
+                certified=True, answered_by=answered_by, built_at=_now_iso()
+            )
+            if target_id in self.notes:
+                existing = self.notes[target_id]
+                self.notes[target_id] = existing.model_copy(
+                    update={
+                        "summary": note.summary,
+                        "publication_status": ProvenanceStatus.certified,
+                        "audit": new_audit,
+                    }
+                )
+            elif target_id in self.metrics:
+                existing = self.metrics[target_id]
+                updates: dict = {"audit": new_audit}
+                for line in (note.body or "").splitlines():
+                    if line.startswith("base_table="):
+                        raw = line[len("base_table=") :]
+                        updates["base_table"] = self.table_id(raw) or raw
+                    elif line.startswith("expression="):
+                        updates["expression"] = line[len("expression=") :]
+                self.metrics[target_id] = existing.model_copy(update=updates)
+            else:
+                return f"error: conflict target {target_id!r} no longer exists"
+
+        resolved_status = "resolved_replaced" if resolution == "replace" else "resolved_kept_existing"
+        self.notes[conflict_note_id] = note.model_copy(
+            update={
+                "conflict_status": resolved_status,
+                "governance": Governance(
+                    excluded=True,
+                    reason=f"conflict resolved: {resolution}",
+                    by=answered_by,
+                    at=_now_iso(),
+                ),
+            }
+        )
+        return f"ok: resolved {conflict_note_id} ({resolution})"
 
     def _reinforce_asset(self, asset_id: str, rec: ClarificationRecord) -> bool:
         """Round B: a second, independently-worded clarification confirming the

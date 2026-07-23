@@ -35,6 +35,9 @@ from .schemas import (
     ColumnRefResponse,
     ColumnRelatedMetaResponse,
     ColumnRelatedResponse,
+    ConflictResolveRequest,
+    ConflictResolveResponse,
+    ConflictRowResponse,
     EditRequest,
     EditResponse,
     HealthResponse,
@@ -312,6 +315,93 @@ def create_app(stack: ServeStack | None = None):
 
         rows = presenter.assumption_rows(load_corpus(stack.corpus_root))
         return [AssumptionRowResponse.model_validate(r) for r in rows]
+
+    @app.get(
+        "/corpus/conflicts", response_model=list[ConflictRowResponse], tags=["corpus"]
+    )
+    def corpus_conflicts(
+        status: str | None = Query(
+            None, description="Filter by status, e.g. 'unresolved'"
+        ),
+    ) -> list[ConflictRowResponse]:
+        """Round C: clarifications whose Enhancer decision CONTRADICTED an
+        existing NoteAsset/MetricAsset — distinct from the calm, settled
+        ``/corpus/assumptions`` log. Includes both unresolved and resolved
+        conflicts (``status`` filters); reloaded from disk each call, same as
+        ``/corpus/assumptions``.
+        """
+        from ..corpus import load_corpus
+
+        rows = presenter.conflict_rows(load_corpus(stack.corpus_root))
+        if status is not None:
+            rows = [r for r in rows if r.status == status]
+        return [ConflictRowResponse.model_validate(r) for r in rows]
+
+    @app.post(
+        "/corpus/conflicts/{conflict_id}/resolve",
+        response_model=ConflictResolveResponse,
+        tags=["corpus"],
+    )
+    def resolve_conflict(
+        conflict_id: str, req: ConflictResolveRequest
+    ) -> ConflictResolveResponse:
+        """Admin resolution for one Round-C conflict (gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``). ``resolution=
+        "keep_existing"`` discards the conflicting answer; ``"replace"``
+        overwrites the existing asset's definition with it and certifies it.
+        404 on an unknown/non-conflict id.
+        """
+        from ..corpus import load_corpus
+        from ..corpus.schemas import NoteAsset, TableAsset
+        from ..curator.asset_bag import AssetBag
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        current = load_corpus(stack.corpus_root)
+        note = current.by_id(conflict_id)
+        if not isinstance(note, NoteAsset) or note.conflict_status is None:
+            raise HTTPException(
+                status_code=404, detail=f"unknown conflict id={conflict_id!r}"
+            )
+
+        schema = _corpus_subtree_for_asset(note, stack.corpus_root, current)
+        if schema is None:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot determine corpus/<schema>/ subtree for this conflict",
+            )
+
+        schema_corpus = load_corpus(stack.corpus_root, schema=schema)
+        tables = [a for a in schema_corpus.assets if isinstance(a, TableAsset)]
+        other = [a for a in schema_corpus.assets if not isinstance(a, TableAsset)]
+        bag = AssetBag.from_tables(schema, tables)
+        for asset in other:
+            if asset.asset_type == "metric":
+                bag.metrics[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "note":
+                bag.notes[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "join":
+                bag.joins[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "term":
+                bag.terms[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "few_shot":
+                bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+
+        msg = bag.resolve_conflict(
+            conflict_id, req.resolution, answered_by=req.answered_by
+        )
+        if not msg.startswith("ok:"):
+            raise HTTPException(status_code=422, detail=msg)
+        bag.write(stack.corpus_root)
+
+        resolved_note = bag.notes[conflict_id]
+        return ConflictResolveResponse(
+            resolved=True,
+            conflict_id=conflict_id,
+            status=resolved_note.conflict_status or "unresolved",
+            detail=msg,
+        )
 
     @app.post("/corpus/edit", response_model=EditResponse, tags=["corpus"])
     def corpus_edit(req: EditRequest) -> EditResponse:

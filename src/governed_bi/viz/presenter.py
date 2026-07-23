@@ -132,6 +132,27 @@ class AssumptionRow:
 
 
 @dataclass(frozen=True)
+class ConflictRow:
+    """One Round-C conflict: a clarification whose Enhancer decision flagged
+    ``conflict_with`` an existing ``NoteAsset``/``MetricAsset``. Distinct from
+    :class:`AssumptionRow`: these are DISAGREEING definitions awaiting an admin
+    decision, not settled assumptions.
+    """
+
+    id: str  # the conflict NoteAsset's id (target for resolve_conflict)
+    status: str  # "unresolved" | "resolved_kept_existing" | "resolved_replaced"
+    existing_asset_id: str  # the asset this conflicts with
+    existing_asset_type: str  # "note" | "metric"
+    existing_text: str  # the existing asset's current definition
+    existing_question: str | None  # the question behind the existing side, if known
+    new_question: str | None  # the question behind the new, conflicting answer
+    new_text: str  # the new, conflicting answer's definition
+    answered_by: str | None
+    created_at: str | None
+    source: str | None  # "curator" | "live_chat"
+
+
+@dataclass(frozen=True)
 class CorpusHealth:
     counts: dict[str, int]  # asset_type -> count
     n_suspect_columns: int
@@ -528,10 +549,18 @@ def assumption_rows(corpus: "Corpus") -> list[AssumptionRow]:
     answered ``ClarificationRecord`` (see ``curator/asset_bag.py``). A note
     authored through any other path has no ``source_question`` and is excluded,
     so this is a real filter, not "every note typed."
+
+    Also excludes Round-C conflict notes (``conflict_status is not None``):
+    those carry ``source_question`` too (the question behind the disagreeing
+    answer) but are NOT settled assumptions — they belong in
+    :func:`conflict_rows` instead, whether resolved or not, so a resolved
+    conflict never quietly reappears here as if it had been agreed calmly.
     """
     rows: list[AssumptionRow] = []
     for asset in corpus.assets:
         if not isinstance(asset, NoteAsset) or asset.source_question is None:
+            continue
+        if asset.conflict_status is not None:
             continue
         provenance = asset.audit.provenance if asset.audit is not None else None
         rows.append(
@@ -541,6 +570,51 @@ def assumption_rows(corpus: "Corpus") -> list[AssumptionRow]:
                 answer=asset.summary,
                 answered_by=getattr(provenance, "by", None) if provenance else None,
                 answered_at=provenance.built_at if provenance else None,
+                source=asset.source_kind,
+            )
+        )
+    return rows
+
+
+def conflict_rows(corpus: "Corpus") -> list[ConflictRow]:
+    """Round-C conflicts: clarifications whose Enhancer decision flagged
+    ``conflict_with`` an existing ``NoteAsset``/``MetricAsset`` (see
+    ``AssetBag._record_conflict``). Includes both unresolved and resolved
+    conflicts (``status`` distinguishes them) so a UI can show history, not
+    just the current backlog.
+    """
+    by_id = {a.id: a for a in corpus.assets}
+    rows: list[ConflictRow] = []
+    for asset in corpus.assets:
+        if not isinstance(asset, NoteAsset) or asset.conflict_status is None:
+            continue
+        provenance = asset.audit.provenance if asset.audit is not None else None
+        existing_id = asset.related_notes[0] if asset.related_notes else ""
+        existing = by_id.get(existing_id)
+        if isinstance(existing, NoteAsset):
+            existing_type = "note"
+            existing_text = existing.summary
+            existing_question = existing.source_question
+        elif isinstance(existing, MetricAsset):
+            existing_type = "metric"
+            existing_text = f"{existing.name} = {existing.expression}"
+            existing_question = None
+        else:
+            existing_type = "unknown"
+            existing_text = "(asset no longer exists)"
+            existing_question = None
+        rows.append(
+            ConflictRow(
+                id=asset.id,
+                status=asset.conflict_status,
+                existing_asset_id=existing_id,
+                existing_asset_type=existing_type,
+                existing_text=existing_text,
+                existing_question=existing_question,
+                new_question=asset.source_question,
+                new_text=asset.summary,
+                answered_by=getattr(provenance, "by", None) if provenance else None,
+                created_at=provenance.built_at if provenance else None,
                 source=asset.source_kind,
             )
         )

@@ -287,6 +287,35 @@ class AssumptionRowResponse(_View):
     source: str | None
 
 
+# ── Round C: unresolved/resolved conflicts (distinct from Agreed Assumptions) ─ #
+class ConflictRowResponse(_View):
+    id: str
+    status: str  # "unresolved" | "resolved_kept_existing" | "resolved_replaced"
+    existing_asset_id: str
+    existing_asset_type: str  # "note" | "metric" | "unknown"
+    existing_text: str
+    existing_question: str | None
+    new_question: str | None
+    new_text: str
+    answered_by: str | None
+    created_at: str | None
+    source: str | None
+
+
+class ConflictResolveRequest(BaseModel):
+    """Body for ``POST /corpus/conflicts/{id}/resolve``."""
+
+    resolution: Literal["keep_existing", "replace"]
+    answered_by: str = "admin"
+
+
+class ConflictResolveResponse(BaseModel):
+    resolved: bool
+    conflict_id: str
+    status: str
+    detail: str
+
+
 # ── chat ──────────────────────────────────────────────────────────────────── #
 class TurnIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)

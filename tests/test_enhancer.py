@@ -246,7 +246,9 @@ def test_full_3_clarification_sequence_produces_one_metric_not_three_notes():
         )
     )
     bag.record_caveats([CLAR_2], chat=chat_2)
-    # Conflict flagged, not written — still just the one metric.
+    # Conflict flagged, not written as a competing metric — still just the one
+    # metric. (Round C: the conflicting answer is persisted as an unresolved
+    # conflict NoteAsset instead, asserted below — not silently dropped.)
     assert len(bag.metrics) == 1
 
     chat_3 = StaticChatClient(
@@ -263,7 +265,12 @@ def test_full_3_clarification_sequence_produces_one_metric_not_three_notes():
     # correctly a new metric, not a duplicate — proving the fold never silently
     # smuggled the conflicting answer in under a different clarification.
     assert len(bag.metrics) == 2
-    assert sum(1 for n in bag.notes.values()) == 0
+    # Round C: clarification 2's conflicting answer landed as exactly one
+    # unresolved conflict note (not a competing metric, not silently dropped).
+    assert sum(1 for n in bag.notes.values()) == 1
+    [conflict_note] = bag.notes.values()
+    assert conflict_note.conflict_status == "unresolved"
+    assert conflict_note.related_notes == [line_items_metric_id]
 
 
 # --------------------------------------------------------------------------- #
