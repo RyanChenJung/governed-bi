@@ -10,6 +10,7 @@ a governed answer, provenance records the clarification, and a decline fails clo
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,6 +33,24 @@ CORPUS_ROOT = Path(__file__).resolve().parents[1] / "corpus"
 BIRD_DB = Path(__file__).resolve().parents[1] / "data" / "bird" / "beer_factory.sqlite"
 REVENUE_Q = "What is the total revenue?"
 
+# A canned, valid Enhancer decision (see curator.enhancer._decision_from_payload):
+# the Enhancer's own fake model always answers with this, on its OWN scripted
+# queue (never the main conversation's) — see ``_clarify_stack``'s
+# ``enhancer_chat_model``.
+_ENHANCER_DECISION = AIMessage(
+    content=json.dumps(
+        {
+            "concept_name": "test_clarification_note",
+            "asset_type": "note",
+            "generalized_definition": "Stub note produced by the test's Enhancer fake.",
+            "duplicate_of": None,
+            "conflict_with": None,
+            "base_table": None,
+            "expression": None,
+        }
+    )
+)
+
 
 def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     """A live-ish stack: scripted model + an in-memory clarify checkpointer, so
@@ -42,6 +61,16 @@ def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     to ``<corpus_root>/clarifications.jsonl`` (this round's feature), and every
     test here goes through the real production wiring (``build_chat_graph`` ->
     ``answer_question_agent``) that performs that write.
+
+    ``chat_model`` (the main conversation's scripted trajectory) and
+    ``enhancer_chat_model`` (the fold Enhancer's own model, see
+    ``build_agent_core``) are deliberately two SEPARATE ``FakeToolModel``
+    instances with independent response queues — mirroring production, where
+    the Enhancer gets its own client built fresh from ``Settings`` rather than
+    reusing the model driving the main turn. If the Enhancer's fold call ever
+    again consumed from the main queue, ``chat_model.i`` would advance past
+    what the scripted trajectory accounts for and callers of this helper would
+    get desynced responses (exactly the regression this wiring prevents).
     """
     if not BIRD_DB.exists():
         pytest.skip("vendored beer_factory.sqlite not present")
@@ -61,6 +90,7 @@ def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
         can_clarify=True,
         clarify_checkpointer=InMemorySaver(),
         corpus_root=corpus_root,
+        enhancer_chat_model=FakeToolModel(responses=[_ENHANCER_DECISION]),
     )
 
 
@@ -284,6 +314,15 @@ def test_sequential_multi_clarification(tmp_path):
     # Idempotent across two resumes: run_query executed exactly once.
     ledger = answer["provenance"].get("governance_ledger") or []
     assert len([e for e in ledger if e.get("action") == "run_query"]) == 1
+    # Decoupling regression check: the fold Enhancer runs once per answered
+    # clarification (two here) on its OWN scripted queue, never the main
+    # conversation's — so the main model consumed exactly the 5 scripted
+    # trajectory turns (m1..m4 + "done"), no more, while the separate Enhancer
+    # fake was actually invoked at least once. Before the fix, the Enhancer's
+    # fold call reused the main model instance and silently consumed one of
+    # its scripted turns, desyncing the trajectory (this test used to fail).
+    assert stack.chat_model.i == len(_MULTI_TURNS)
+    assert stack.enhancer_chat_model.i >= 1
 
 
 def test_no_ask_user_tool_when_clarify_disabled(tmp_path):

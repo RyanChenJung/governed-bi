@@ -185,6 +185,27 @@ def _physical_to_id_map(corpus: "Corpus") -> dict[str, str]:
     return out
 
 
+def _build_enhancer_chat_model(settings: "Settings") -> Any | None:
+    """Fresh, independently-constructed raw chat model for the Enhancer's
+    one-shot fold judgment call (see ``tools._fold_answered_clarifications``).
+
+    Deliberately NOT the same model instance driving the main agent turn: that
+    instance is a single object shared/threaded across the whole turn's
+    conversational loop, and an extra side-channel call on it could desync any
+    model wrapper with per-call state (a scripted test double today; a real
+    reasoning-trace/rate-limit/caching wrapper conceivably tomorrow). Same
+    construction path ``api/stack.py``'s ``_build_model_stack`` already uses.
+    Non-fatal: returns ``None`` on any failure, which makes the fold fall back
+    to the legacy verbatim-note behavior (see ``EnhancerError`` handling).
+    """
+    try:
+        from ..llm import LangChainChatClient
+
+        return LangChainChatClient.from_config(settings.models).model
+    except Exception:
+        return None
+
+
 def build_agent_core(
     corpus: "Corpus",
     gateway: "Gateway",
@@ -199,6 +220,7 @@ def build_agent_core(
     enable_clarify: bool = False,
     checkpointer: Any = None,
     corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
 ):
     """Assemble ``create_agent`` with governed tools + middleware.
 
@@ -208,7 +230,21 @@ def build_agent_core(
 
     ``corpus_root``, when given, lets ``ask_user`` durably log live questions to
     the curator clarifications ledger (see ``make_tools``); ``None`` skips that.
+
+    ``enhancer_chat_model``, when given, is used as-is for the fold Enhancer's
+    model instead of building a fresh one from ``settings`` (see
+    ``_build_enhancer_chat_model``) — production leaves this ``None`` (the
+    fresh-from-``Settings`` build is always distinct from ``model``); tests use
+    it to inject a fake/stub model for the Enhancer path.
     """
+    if enable_clarify:
+        enhancer_model = (
+            enhancer_chat_model
+            if enhancer_chat_model is not None
+            else _build_enhancer_chat_model(settings)
+        )
+    else:
+        enhancer_model = None
     tools = make_tools(
         corpus,
         gateway,
@@ -216,7 +252,7 @@ def build_agent_core(
         embedder=embedder,
         enable_clarify=enable_clarify,
         corpus_root=corpus_root,
-        chat_model=model,
+        enhancer_chat_model=enhancer_model,
     )
     mw = GovernanceMiddleware(
         corpus,
@@ -290,6 +326,7 @@ def build_serve_rails(
     run_id: str | None = None,
     n_human: int = 1,
     corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
 ):
     """Compile the outer deterministic StateGraph wrapping the agent core.
 
@@ -298,7 +335,14 @@ def build_serve_rails(
     agent on that checkpointer + ``clarify_thread`` so ``ask_user``'s ``interrupt``
     can pause/resume. ``clarify_resume`` (a ``ClarificationResponse``) resumes a
     paused inner agent. All three default off/None, leaving the eval path
-    byte-for-byte unchanged."""
+    byte-for-byte unchanged.
+
+    ``enhancer_chat_model``, when given, overrides ``build_agent_core``'s default
+    of building a fresh Enhancer model from ``Settings`` — tests use this to
+    inject a distinct fake/stub model for the Enhancer's fold call, so it is
+    verifiably NOT the same instance as ``model`` (the main-turn model) without
+    making a real Enhancer call hit a live provider.
+    """
     # Bare references resolve to the serving schema (the SQLite ATTACH alias, or the
     # pinned Postgres schema); None means the source spans every schema, so a bare
     # reference fails closed.
@@ -719,6 +763,7 @@ def build_serve_rails(
             enable_clarify=clarify_on,
             checkpointer=clarify_checkpointer,
             corpus_root=corpus_root,
+            enhancer_chat_model=enhancer_chat_model,
         )
 
         # One tracing handler per turn: it is attached at the outer graph.invoke
@@ -1030,6 +1075,7 @@ def answer_question_agent(
     run_id: str | None = None,
     n_human: int = 1,
     corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
 ) -> "Answer | ClarificationPending":
     """Run one question through the agentic serve rails.
 
@@ -1040,6 +1086,11 @@ def answer_question_agent(
 
     ``corpus_root``, when given, is threaded to ``ask_user`` so it durably logs
     every live question (and its answer) to the curator clarifications ledger.
+
+    ``enhancer_chat_model``, when given, overrides the default fresh-from-
+    ``Settings`` Enhancer model (see ``build_agent_core``) — production leaves
+    this ``None``; tests use it to inject a fake/stub model distinct from
+    ``model``.
     """
     _run_id = run_id or new_run_id()
     graph = build_serve_rails(
@@ -1060,6 +1111,7 @@ def answer_question_agent(
         run_id=_run_id,
         n_human=n_human,
         corpus_root=corpus_root,
+        enhancer_chat_model=enhancer_chat_model,
     )
     final = graph.invoke(
         {

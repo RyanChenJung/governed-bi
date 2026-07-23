@@ -158,6 +158,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                     clarify_resume=resume,
                     n_human=n_human,
                     corpus_root=stack.corpus_root,
+                    enhancer_chat_model=stack.enhancer_chat_model,
                 )
             finally:
                 connector.close()

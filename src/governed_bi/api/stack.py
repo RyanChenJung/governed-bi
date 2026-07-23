@@ -52,6 +52,11 @@ class ServeStack:
     chat_model: Any | None = None  # raw LangChain BaseChatModel driving the agent core
     can_clarify: bool = False  # serve-time HITL (ask_user) is available (streaming + live model)
     clarify_checkpointer: Any | None = None  # inner-agent saver for interrupt/resume (H10 durable)
+    # Overrides the fold Enhancer's default fresh-from-Settings model (see
+    # analyst.agent.build_agent_core) — production leaves this None; tests set it
+    # to a fake/stub distinct from chat_model, so the Enhancer's side-channel call
+    # is verifiably decoupled from the main-turn model instance.
+    enhancer_chat_model: Any | None = None
     conversation_checkpointer: Any | None = None  # durable outer-chat saver (ADR 0004 L3)
 
     def open_connector(self, *, connect_timeout: float | None = None) -> "Connector":

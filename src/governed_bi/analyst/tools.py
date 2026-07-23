@@ -103,7 +103,7 @@ def _record_live_clarification_answer(
     deferred: bool = False,
     answer: str,
     corpus: "Corpus | None" = None,
-    chat_model: Any | None = None,
+    enhancer_chat_model: Any | None = None,
 ) -> None:
     """After ``interrupt`` returns, sync the ledger record with what actually
     happened live: answered records get the answer; a decline or a defer both
@@ -137,21 +137,27 @@ def _record_live_clarification_answer(
             }
         )
         write_clarifications(path, records)
-        _fold_answered_clarifications(corpus_root, corpus, chat_model)
+        _fold_answered_clarifications(corpus_root, corpus, enhancer_chat_model)
         return
 
 
 def _fold_answered_clarifications(
-    corpus_root: "Path", corpus: "Corpus | None", chat_model: Any | None = None
+    corpus_root: "Path", corpus: "Corpus | None", enhancer_chat_model: Any | None = None
 ) -> None:
     """Best-effort: run the round-10 poll step for every schema this corpus
     covers. Errors are logged, not raised — the ledger write above already
     durably saved the answer regardless of whether folding succeeds.
 
-    ``chat_model`` (the raw LangChain model already driving this Analyst turn),
-    when given, is wrapped and passed through so the fold's Enhancer (Round A)
-    generalizes/dedupes this answer against existing notes/metrics instead of
-    writing its literal text as a fresh, un-deduplicated note every time.
+    ``enhancer_chat_model``, when given, is wrapped and passed through so the
+    fold's Enhancer (Round A) generalizes/dedupes this answer against existing
+    notes/metrics instead of writing its literal text as a fresh,
+    un-deduplicated note every time. This must be a chat model instance
+    dedicated to the Enhancer's own one-shot judgment call — NEVER the same
+    instance driving the main Analyst turn's conversational loop (see
+    ``make_tools``'s docstring): reusing that instance would let this
+    side-channel call consume/advance any per-call state it carries (a
+    scripted test double's response queue today; conceivably a real
+    reasoning-trace or rate-limit wrapper's state tomorrow).
     """
     if corpus is None:
         return
@@ -161,10 +167,10 @@ def _fold_answered_clarifications(
 
     logger = logging.getLogger("governed_bi.analyst")
     chat = None
-    if chat_model is not None:
+    if enhancer_chat_model is not None:
         from ..llm.langchain_client import LangChainChatClient
 
-        chat = LangChainChatClient(chat_model)
+        chat = LangChainChatClient(enhancer_chat_model)
     schemas = {a.schema for a in corpus.assets if isinstance(a, TableAsset)}
     for schema in schemas:
         try:
@@ -362,7 +368,7 @@ def make_tools(
     embedder: "Embedder | None" = None,
     enable_clarify: bool = False,
     corpus_root: "Path | None" = None,
-    chat_model: Any | None = None,
+    enhancer_chat_model: Any | None = None,
 ):
     """Factory: the governed read-only tools closed over deployment deps.
 
@@ -380,10 +386,12 @@ def make_tools(
     an admin to answer later. ``None`` (the default) skips the ledger write
     entirely — used by every caller that predates this feature.
 
-    ``chat_model``, when given, is the raw LangChain model already driving this
-    Analyst turn — reused (no new client) to power the fold Enhancer when
-    ``ask_user``'s answer is folded into the corpus (see
-    ``_fold_answered_clarifications``).
+    ``enhancer_chat_model``, when given, is a chat model built specifically for
+    the fold Enhancer's own one-shot judgment call when ``ask_user``'s answer is
+    folded into the corpus (see ``_fold_answered_clarifications``) — a distinct,
+    independently-constructed instance from whatever model is driving this
+    Analyst turn's own conversational loop, never that same instance (see
+    ``build_agent_core``, which builds it fresh from ``Settings``).
     """
     _ = gateway, identity  # owned by GovernanceMiddleware for data-touching tools
 
@@ -526,7 +534,7 @@ def make_tools(
             deferred=parsed["deferred"],
             answer=answer,
             corpus=corpus,
-            chat_model=chat_model,
+            enhancer_chat_model=enhancer_chat_model,
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED
