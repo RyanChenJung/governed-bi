@@ -118,6 +118,20 @@ class AssetRow:
 
 
 @dataclass(frozen=True)
+class AssumptionRow:
+    """One admin-answered clarification folded into the corpus as a ``NoteAsset``
+    (Round 9). Distinct from :class:`AssetRow`: this is the readable
+    question→answer log an admin agreed to, not an editable asset row."""
+
+    id: str
+    question: str
+    answer: str
+    answered_by: str | None
+    answered_at: str | None  # ISO timestamp (fold time); ``None`` if unset
+    source: str | None  # "curator" | "live_chat"
+
+
+@dataclass(frozen=True)
 class CorpusHealth:
     counts: dict[str, int]  # asset_type -> count
     n_suspect_columns: int
@@ -501,6 +515,33 @@ def asset_rows(corpus: "Corpus", *, asset_types: set[str] | None = None) -> list
                 summary=_summary(asset),
                 provenance_status=_provenance_status(asset),
                 excluded=getattr(getattr(asset, "governance", None), "excluded", False),
+            )
+        )
+    return rows
+
+
+def assumption_rows(corpus: "Corpus") -> list[AssumptionRow]:
+    """Admin-answered clarifications folded into the corpus (Round 9).
+
+    Filters ``NoteAsset``s down to those that carry ``source_question`` — the
+    marker ``AssetBag.record_caveats`` stamps only when a note came from an
+    answered ``ClarificationRecord`` (see ``curator/asset_bag.py``). A note
+    authored through any other path has no ``source_question`` and is excluded,
+    so this is a real filter, not "every note typed."
+    """
+    rows: list[AssumptionRow] = []
+    for asset in corpus.assets:
+        if not isinstance(asset, NoteAsset) or asset.source_question is None:
+            continue
+        provenance = asset.audit.provenance if asset.audit is not None else None
+        rows.append(
+            AssumptionRow(
+                id=asset.id,
+                question=asset.source_question,
+                answer=asset.summary,
+                answered_by=getattr(provenance, "by", None) if provenance else None,
+                answered_at=provenance.built_at if provenance else None,
+                source=asset.source_kind,
             )
         )
     return rows

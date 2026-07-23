@@ -514,6 +514,91 @@ def test_apply_answered_clarifications_to_corpus_folds_live_chat_source(tmp_path
     assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
 
 
+def test_assumption_rows_pick_up_answered_clarification_with_question_intact(tmp_path: Path):
+    """Round 9: the admin "agreed assumptions" log view (``presenter.assumption_rows``
+    / ``GET /corpus/assumptions``) reads ``NoteAsset.source_question`` — the field
+    ``AssetBag.record_caveats`` now stamps when folding an answered clarification
+    (previously only the resolved answer text survived, as ``summary``; the
+    original question was lost). Answering a clarification via the existing
+    ``apply_answered_clarifications_to_corpus`` flow must produce a row with the
+    question text intact, plus answered_by/source."""
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+    from governed_bi.viz import presenter
+
+    schema = "beer_factory"
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+    rec = ClarificationRecord(
+        id="q_live_002",
+        scope="live_chat:q_live_002",
+        question="Should refunds count as negative revenue or be excluded?",
+        status=ClarificationRecordStatus.answered,
+        answer="Exclude refunds from revenue entirely.",
+        answered_by="admin_jane",
+        source="live_chat",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+    write_clarifications(clarifications_path(corpus_root), [rec])
+
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 1
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    rows = presenter.assumption_rows(corpus)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.question == "Should refunds count as negative revenue or be excluded?"
+    assert row.answer == "Exclude refunds from revenue entirely."
+    assert row.answered_by == "admin_jane"
+    assert row.source == "live_chat"
+    assert row.answered_at  # non-empty ISO timestamp (fold time)
+
+
+def test_assumption_rows_excludes_notes_from_other_paths(tmp_path: Path):
+    """A ``NoteAsset`` created through some other path — not via
+    ``record_caveats``/an answered clarification — carries no
+    ``source_question`` and must NOT show up in the assumptions log view. Proves
+    the filter is a real marker, not "return every note typed=context"."""
+    from governed_bi.viz import presenter
+
+    schema = "beer_factory"
+    bag = AssetBag(schema=schema)
+    msg = bag.propose_note(
+        "Revenue excludes tax by convention.",
+        certified=True,
+        answered_by="curator_agent",
+    )
+    assert msg.startswith("ok:")
+
+    from governed_bi.corpus import Corpus
+
+    corpus = Corpus(assets=bag.all_assets())
+    assert presenter.assumption_rows(corpus) == []
+    # Sanity: the note exists, it just isn't clarification-derived.
+    assert len(bag.notes) == 1
+    assert next(iter(bag.notes.values())).source_question is None
+
+
 def test_deep_agent_invoke_receives_tracing_callbacks(bird_connector, tmp_path: Path, monkeypatch):
     """The curator deep agent must run with Langfuse callbacks in its config, or
     its (majority) LLM volume is invisible to the dashboard. Regression guard."""

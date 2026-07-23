@@ -410,6 +410,15 @@ class NoteAsset(_Strict):
     publication_status: ProvenanceStatus = ProvenanceStatus.proposed
     # serve-visible; Audit.Provenance.status is stripped by for_analyst
 
+    # ── Round 9: admin clarification provenance (optional, backward-compatible) ──
+    # When this note was folded from an answered ``ClarificationRecord`` (see
+    # ``AssetBag.record_caveats``), these preserve the original question and
+    # its origin so the admin "agreed assumptions" log view can show a
+    # question→answer pair instead of just the answer. ``None`` for any note
+    # created through another path (e.g. a curator/agent-authored note).
+    source_question: str | None = None
+    source_kind: str | None = None  # "curator" | "live_chat", mirrors ClarificationRecord.source
+
     # ── Governance (NEW vs. RuleAsset; closes a latent D6 gap) ──
     governance: Governance | None = None
 

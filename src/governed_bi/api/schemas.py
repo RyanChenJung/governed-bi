@@ -277,6 +277,16 @@ class AssetRowResponse(_View):
     excluded: bool
 
 
+# ── admin "agreed assumptions" log (Round 9) ────────────────────────────────── #
+class AssumptionRowResponse(_View):
+    id: str
+    question: str
+    answer: str
+    answered_by: str | None
+    answered_at: str | None
+    source: str | None
+
+
 # ── chat ──────────────────────────────────────────────────────────────────── #
 class TurnIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)

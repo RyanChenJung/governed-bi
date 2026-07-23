@@ -41,14 +41,21 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "x"
 
 
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _inference_audit(
     *,
     model: str | None = None,
     source: ProvenanceSource = ProvenanceSource.curator,
     status: ProvenanceStatus = ProvenanceStatus.proposed,
     by: str | None = None,
+    built_at: str | None = None,
 ) -> Audit:
-    prov = Provenance(source=source, status=status, model=model)
+    prov = Provenance(source=source, status=status, model=model, built_at=built_at)
     if by is not None:
         data = prov.model_dump(mode="python")
         data["by"] = by
@@ -598,12 +605,25 @@ class AssetBag:
         confidence: float = 0.7,
         certified: bool = False,
         answered_by: str | None = None,
+        source_question: str | None = None,
+        source_kind: str | None = None,
     ) -> str:
-        """Record a governed note/caveat that serve should heed."""
+        """Record a governed note/caveat that serve should heed.
+
+        ``source_question``/``source_kind`` are set when this note is folded
+        from an answered clarification (see ``record_caveats``) — they preserve
+        the original question + its origin (``curator``/``live_chat``) for the
+        admin "agreed assumptions" log view. Both default to ``None`` for notes
+        created through any other path.
+        """
         summary = (summary or "").strip()
         if not summary:
             return "error: empty note summary"
         note_id = f"note_{_slug(self.schema)}_{len(self.notes) + 1}"
+        # A note stamped with clarification provenance also gets a built_at
+        # timestamp (fold time) for the log view — the ledger itself carries no
+        # answered-at timestamp today.
+        built_at = _now_iso() if source_question is not None else None
         try:
             asset = NoteAsset.model_validate(
                 {
@@ -615,7 +635,11 @@ class AssetBag:
                     "publication_status": (
                         ProvenanceStatus.certified if certified else ProvenanceStatus.proposed
                     ),
-                    "audit": self._audit(certified=certified, answered_by=answered_by),
+                    "source_question": source_question,
+                    "source_kind": source_kind,
+                    "audit": self._audit(
+                        certified=certified, answered_by=answered_by, built_at=built_at
+                    ),
                 }
             )
         except ValidationError as err:
@@ -647,6 +671,8 @@ class AssetBag:
                 kind=NoteKind.context,
                 certified=True,
                 answered_by=rec.answered_by or "sme",
+                source_question=rec.question,
+                source_kind=rec.source,
             )
             if msg.startswith("ok:"):
                 n += 1
@@ -771,6 +797,7 @@ class AssetBag:
         certified: bool = False,
         answered_by: str | None = None,
         existing: Audit | None = None,
+        built_at: str | None = None,
     ) -> Audit:
         if certified:
             return _inference_audit(
@@ -778,6 +805,7 @@ class AssetBag:
                 source=ProvenanceSource.human,
                 status=ProvenanceStatus.certified,
                 by=answered_by,
+                built_at=built_at,
             )
         if existing is not None:
             return existing

@@ -26,6 +26,7 @@ from .schemas import (
     AnswerResponse,
     AssetRowResponse,
     AssetTypeFilter,
+    AssumptionRowResponse,
     CapabilitiesResponse,
     ChatRequest,
     ClarificationAnswerRequest,
@@ -293,6 +294,21 @@ def create_app(stack: ServeStack | None = None):
         types = {asset_type} if asset_type else None
         rows = presenter.asset_rows(stack.corpus_full, asset_types=types)
         return [AssetRowResponse.model_validate(r) for r in rows]
+
+    @app.get(
+        "/corpus/assumptions", response_model=list[AssumptionRowResponse], tags=["corpus"]
+    )
+    def corpus_assumptions() -> list[AssumptionRowResponse]:
+        """Admin-answered clarifications folded into the corpus (Round 9).
+
+        Filtered to ``NoteAsset``s that carry ``source_question`` — set only
+        when the note was folded from an answered ``ClarificationRecord`` (see
+        ``AssetBag.record_caveats``). A readable question→answer log for "what
+        has an admin agreed to," distinct from the raw ``/corpus/assets`` editor
+        list.
+        """
+        rows = presenter.assumption_rows(stack.corpus_full)
+        return [AssumptionRowResponse.model_validate(r) for r in rows]
 
     @app.post("/corpus/edit", response_model=EditResponse, tags=["corpus"])
     def corpus_edit(req: EditRequest) -> EditResponse:
