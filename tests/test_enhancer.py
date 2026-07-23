@@ -292,3 +292,120 @@ def test_no_chat_client_keeps_legacy_verbatim_behavior():
     [note] = bag.notes.values()
     assert note.summary == "Net revenue = SUM(unit_price - discount)"
     assert not bag.metrics
+
+
+# --------------------------------------------------------------------------- #
+# Round B: reinforcing (not no-op'ing) a recognized duplicate
+# --------------------------------------------------------------------------- #
+
+
+def _duplicate_clar(rec_id: str) -> ClarificationRecord:
+    return ClarificationRecord(
+        id=rec_id,
+        scope=f"live_chat:{rec_id}",
+        question="How should 'total revenue' be calculated?",
+        status=ClarificationRecordStatus.answered,
+        answer="Sum of olist.payments.amount (all statuses)",
+        answered_by="admin",
+        source="live_chat",
+    )
+
+
+def test_duplicate_reinforces_existing_asset_confidence_and_tracks_it():
+    bag = _bag()
+    msg = bag.upsert_metric(
+        "total_revenue_payments_basis",
+        "payments",
+        "SUM(payments.amount)",
+        confidence=0.6,
+        certified=True,
+    )
+    assert msg.startswith("ok:")
+    [existing_id] = bag.metrics.keys()
+    before = bag.metrics[existing_id]
+    assert before.audit.provenance.model_extra.get("reinforced_by") is None
+
+    clar = _duplicate_clar("clar_reinforce_1")
+    chat = StaticChatClient(
+        _metric_json(
+            "total_revenue_payments_basis",
+            "payments",
+            "SUM(payments.amount)",
+            duplicate_of=existing_id,
+        )
+    )
+    counts = bag.record_caveats_detail([clar], chat=chat)
+
+    assert counts == CaveatFoldCounts(duplicate=1)
+    assert len(bag.metrics) == 1  # no new asset created
+    assert not bag.notes
+
+    after = bag.metrics[existing_id]
+    assert after.confidence > before.confidence
+    assert after.audit.provenance.reinforced_by == ["clar_reinforce_1"]
+
+
+def test_reinforcement_confidence_has_a_ceiling():
+    bag = _bag()
+    bag.upsert_metric(
+        "total_revenue_payments_basis",
+        "payments",
+        "SUM(payments.amount)",
+        confidence=0.98,
+        certified=True,
+    )
+    [existing_id] = bag.metrics.keys()
+
+    for i in range(10):
+        clar = _duplicate_clar(f"clar_ceiling_{i}")
+        chat = StaticChatClient(
+            _metric_json(
+                "total_revenue_payments_basis",
+                "payments",
+                "SUM(payments.amount)",
+                duplicate_of=existing_id,
+            )
+        )
+        bag.record_caveats_detail([clar], chat=chat)
+
+    final_conf = bag.metrics[existing_id].confidence
+    assert final_conf <= 1.0
+    assert final_conf > 0.98  # still moved toward the ceiling
+    assert len(bag.metrics[existing_id].audit.provenance.reinforced_by) == 10
+
+
+def test_refolding_the_same_clarification_does_not_double_reinforce():
+    """A corpus fold re-run over an already-processed record (the scenario
+    ``apply_answered_clarifications_to_corpus``'s ``converted_to_corpus`` guard
+    exists to prevent at the pipeline layer) must not double-bump confidence if
+    something calls the fold twice with the same record."""
+    bag = _bag()
+    bag.upsert_metric(
+        "total_revenue_payments_basis",
+        "payments",
+        "SUM(payments.amount)",
+        confidence=0.6,
+        certified=True,
+    )
+    [existing_id] = bag.metrics.keys()
+
+    clar = _duplicate_clar("clar_reinforce_idempotent")
+    decision_json = _metric_json(
+        "total_revenue_payments_basis",
+        "payments",
+        "SUM(payments.amount)",
+        duplicate_of=existing_id,
+    )
+
+    counts_1 = bag.record_caveats_detail([clar], chat=StaticChatClient(decision_json))
+    conf_after_first = bag.metrics[existing_id].confidence
+    assert counts_1 == CaveatFoldCounts(duplicate=1)
+
+    counts_2 = bag.record_caveats_detail([clar], chat=StaticChatClient(decision_json))
+    conf_after_second = bag.metrics[existing_id].confidence
+
+    assert counts_2 == CaveatFoldCounts(duplicate=1)  # still recognized as a duplicate
+    assert conf_after_second == conf_after_first  # but NOT reinforced a second time
+    assert bag.metrics[existing_id].audit.provenance.reinforced_by == [
+        "clar_reinforce_idempotent"
+    ]

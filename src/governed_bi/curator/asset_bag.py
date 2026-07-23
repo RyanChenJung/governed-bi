@@ -49,7 +49,7 @@ class CaveatFoldCounts:
     duplicate) and Round C (surface a conflict for review) build on."""
 
     created: int = 0  # a new MetricAsset or NoteAsset was written
-    duplicate: int = 0  # recognized as restating an existing asset; no-op
+    duplicate: int = 0  # recognized as restating an existing asset; reinforced in place (Round B)
     conflict: int = 0  # contradicts an existing asset; flagged, not overwritten
     legacy: int = 0  # chat=None, or the Enhancer errored: verbatim NoteAsset fallback
 
@@ -713,9 +713,10 @@ class AssetBag:
         """Same fold as :meth:`record_caveats`, returning the created/
         duplicate/conflict/legacy breakdown instead of a single count.
 
-        This is the hook later rounds build on: Round B reinforces the
-        ``duplicate_of`` target instead of no-op'ing; Round C surfaces
-        ``conflict_with`` for human review instead of just logging it.
+        This is the hook later rounds build on: Round B (done — see
+        :meth:`_reinforce_asset`) reinforces the ``duplicate_of`` target instead
+        of no-op'ing; Round C surfaces ``conflict_with`` for human review
+        instead of just logging it.
         """
         counts = CaveatFoldCounts()
         enhancer = Enhancer(chat) if chat is not None else None
@@ -780,11 +781,13 @@ class AssetBag:
     ) -> None:
         known_ids = self._all_asset_ids()
         if decision.duplicate_of and decision.duplicate_of in known_ids:
+            reinforced = self._reinforce_asset(decision.duplicate_of, rec)
             logger.info(
-                "clarification %s recognized as a duplicate of %s; no new asset written "
-                "(Round B will reinforce the existing asset)",
+                "clarification %s recognized as a duplicate of %s; no new asset written, "
+                "%s",
                 rec.id,
                 decision.duplicate_of,
+                "confidence reinforced" if reinforced else "already reinforced (no-op)",
             )
             counts.duplicate += 1
             return
@@ -830,6 +833,60 @@ class AssetBag:
         )
         if msg.startswith("ok:"):
             counts.created += 1
+
+    def _reinforce_asset(self, asset_id: str, rec: ClarificationRecord) -> bool:
+        """Round B: a second, independently-worded clarification confirming the
+        same concept as an existing ``NoteAsset``/``MetricAsset`` is stronger
+        evidence than the original single answer — reinforce it in place
+        instead of the Round-A no-op.
+
+        Moves ``confidence`` halfway toward 1.0 (``new = old + (1 - old) / 2``),
+        matching the "nudge toward a ceiling, never flat-add unboundedly"
+        shape: each reinforcement asymptotically approaches full confidence
+        without ever reaching or exceeding it, so N reinforcements of an
+        already-high-confidence asset stay sane.
+
+        Tracks the reinforcement as ``Provenance.reinforced_by`` — the list of
+        ``ClarificationRecord.id``s that have confirmed this asset (``Provenance``
+        is ``extra="allow"``; this follows the same append-a-field convention
+        ``_inference_audit``'s ``by`` already uses rather than a new schema
+        field). A human or a later round can read "reinforced 3 times" straight
+        off the asset.
+
+        Idempotent: if ``rec.id`` is already in ``reinforced_by`` (e.g. a fold
+        re-run over a record the pipeline should have already marked
+        ``converted_to_corpus``), this is a no-op — returns ``False`` without
+        touching confidence or the list again. Returns ``True`` when a
+        reinforcement was actually applied.
+        """
+        target = self.notes.get(asset_id) or self.metrics.get(asset_id)
+        if target is None:
+            return False  # duplicate_of pointed at a table/join/term id; nothing to reinforce
+        provenance = target.audit.provenance if target.audit else None
+        reinforced_by = list(getattr(provenance, "reinforced_by", None) or [])
+        if rec.id in reinforced_by:
+            return False
+        reinforced_by.append(rec.id)
+        old_conf = target.confidence if target.confidence is not None else 0.6
+        new_conf = min(1.0, old_conf + (1.0 - old_conf) / 2)
+        prov_data = (
+            provenance.model_dump(mode="python")
+            if provenance is not None
+            else {"source": ProvenanceSource.human, "status": ProvenanceStatus.certified}
+        )
+        prov_data["reinforced_by"] = reinforced_by
+        new_provenance = Provenance.model_validate(prov_data)
+        new_audit = (
+            target.audit.model_copy(update={"provenance": new_provenance})
+            if target.audit is not None
+            else Audit(provenance=new_provenance)
+        )
+        updated = target.model_copy(update={"confidence": new_conf, "audit": new_audit})
+        if asset_id in self.notes:
+            self.notes[asset_id] = updated  # type: ignore[assignment]
+        else:
+            self.metrics[asset_id] = updated  # type: ignore[assignment]
+        return True
 
     def _table_id_index(self) -> dict[str, str]:
         """Map a table id or physical name to its canonical table id."""
