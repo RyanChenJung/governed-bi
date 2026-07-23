@@ -544,30 +544,35 @@ def asset_rows(corpus: "Corpus", *, asset_types: set[str] | None = None) -> list
 def assumption_rows(corpus: "Corpus") -> list[AssumptionRow]:
     """Admin-answered clarifications folded into the corpus (Round 9).
 
-    Filters ``NoteAsset``s down to those that carry ``source_question`` — the
-    marker ``AssetBag.record_caveats`` stamps only when a note came from an
-    answered ``ClarificationRecord`` (see ``curator/asset_bag.py``). A note
-    authored through any other path has no ``source_question`` and is excluded,
-    so this is a real filter, not "every note typed."
+    Filters ``NoteAsset``s AND ``MetricAsset``s (round A can fold an answered
+    clarification into either, depending on whether the Enhancer judged it
+    formula-shaped) down to those that carry ``source_question`` — the marker
+    ``AssetBag`` stamps only when the asset came from an answered
+    ``ClarificationRecord`` (see ``curator/asset_bag.py``). An asset authored
+    through any other path has no ``source_question`` and is excluded, so this
+    is a real filter, not "every note/metric typed."
 
-    Also excludes Round-C conflict notes (``conflict_status is not None``):
-    those carry ``source_question`` too (the question behind the disagreeing
-    answer) but are NOT settled assumptions — they belong in
-    :func:`conflict_rows` instead, whether resolved or not, so a resolved
-    conflict never quietly reappears here as if it had been agreed calmly.
+    Also excludes Round-C conflict notes (``conflict_status is not None`` —
+    ``MetricAsset`` has no such field; conflicts are always written as
+    ``NoteAsset``s, see ``AssetBag._record_conflict``): those carry
+    ``source_question`` too (the question behind the disagreeing answer) but
+    are NOT settled assumptions — they belong in :func:`conflict_rows` instead,
+    whether resolved or not, so a resolved conflict never quietly reappears
+    here as if it had been agreed calmly.
     """
     rows: list[AssumptionRow] = []
     for asset in corpus.assets:
-        if not isinstance(asset, NoteAsset) or asset.source_question is None:
+        if not isinstance(asset, (NoteAsset, MetricAsset)) or asset.source_question is None:
             continue
-        if asset.conflict_status is not None:
+        if isinstance(asset, NoteAsset) and asset.conflict_status is not None:
             continue
         provenance = asset.audit.provenance if asset.audit is not None else None
+        answer = asset.summary if isinstance(asset, NoteAsset) else asset.expression
         rows.append(
             AssumptionRow(
                 id=asset.id,
                 question=asset.source_question,
-                answer=asset.summary,
+                answer=answer,
                 answered_by=getattr(provenance, "by", None) if provenance else None,
                 answered_at=provenance.built_at if provenance else None,
                 source=asset.source_kind,

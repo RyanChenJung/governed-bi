@@ -376,6 +376,13 @@ class MetricAsset(_Strict):
     rules: list[MetricRule] = Field(default_factory=list)
     confidence: Confidence | None = None
 
+    # Mirrors NoteAsset's fields of the same name — set when this metric was
+    # folded from an answered ClarificationRecord (Enhancer, round A), so
+    # /corpus/assumptions can surface it as an Agreed Assumption regardless of
+    # which asset type the Enhancer chose to write.
+    source_question: str | None = None
+    source_kind: str | None = None  # "curator" | "live_chat", mirrors ClarificationRecord.source
+
     audit: Audit | None = None
 
 

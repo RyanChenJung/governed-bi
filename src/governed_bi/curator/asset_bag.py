@@ -281,6 +281,8 @@ class AssetBag:
         confidence: float = 0.6,
         certified: bool = False,
         answered_by: str | None = None,
+        source_question: str | None = None,
+        source_kind: str | None = None,
     ) -> str:
         base_id = self.table_id(base_table)
         if base_id is None:
@@ -299,6 +301,8 @@ class AssetBag:
                     "base_table": base_id,
                     "expression": expression,
                     "confidence": confidence,
+                    "source_question": source_question,
+                    "source_kind": source_kind,
                     "audit": self._audit(certified=certified, answered_by=answered_by),
                 }
             )
@@ -815,6 +819,8 @@ class AssetBag:
                 confidence=0.75,
                 certified=True,
                 answered_by=answered_by,
+                source_question=rec.question,
+                source_kind=rec.source,
             )
             if msg.startswith("ok:"):
                 counts.created += 1
