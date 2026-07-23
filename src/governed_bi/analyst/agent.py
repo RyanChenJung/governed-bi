@@ -216,6 +216,7 @@ def build_agent_core(
         embedder=embedder,
         enable_clarify=enable_clarify,
         corpus_root=corpus_root,
+        chat_model=model,
     )
     mw = GovernanceMiddleware(
         corpus,

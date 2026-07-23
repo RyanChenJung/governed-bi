@@ -29,6 +29,7 @@ from .clarifications import (
     upsert_clarification_record,
     write_clarifications,
 )
+from .enhancer import Enhancer, EnhancerDecision, EnhancerError
 from .enrich import enrich_table
 from .llm_proposer import LlmProposer
 from .loop import CurationResult, curate
@@ -45,6 +46,9 @@ from .sme import SimulatedSme, assert_brief_no_leakage, build_sme_brief
 __all__ = [
     "ClarificationRecord",
     "CurationResult",
+    "Enhancer",
+    "EnhancerDecision",
+    "EnhancerError",
     "HeuristicProposer",
     "LlmProposer",
     "Proposer",

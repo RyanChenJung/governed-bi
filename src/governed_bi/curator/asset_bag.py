@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from pydantic import ValidationError
 
@@ -33,6 +34,28 @@ from .clarifications import (
     parse_scope,
     resolve_answer_text,
 )
+from .enhancer import Enhancer, EnhancerDecision, EnhancerError
+
+if TYPE_CHECKING:
+    from ..llm import ChatClient
+
+logger = logging.getLogger("governed_bi.curator")
+
+
+@dataclass
+class CaveatFoldCounts:
+    """Breakdown of what :meth:`AssetBag.record_caveats_detail` did with each
+    answered caveat-scoped clarification — the hook Round B (reinforce a
+    duplicate) and Round C (surface a conflict for review) build on."""
+
+    created: int = 0  # a new MetricAsset or NoteAsset was written
+    duplicate: int = 0  # recognized as restating an existing asset; no-op
+    conflict: int = 0  # contradicts an existing asset; flagged, not overwritten
+    legacy: int = 0  # chat=None, or the Enhancer errored: verbatim NoteAsset fallback
+
+    @property
+    def total(self) -> int:
+        return self.created + self.duplicate + self.conflict + self.legacy
 
 _Asset = TableAsset | JoinAsset | MetricAsset | TermAsset | FewShotAsset | NoteAsset
 
@@ -607,6 +630,7 @@ class AssetBag:
         answered_by: str | None = None,
         source_question: str | None = None,
         source_kind: str | None = None,
+        id_hint: str | None = None,
     ) -> str:
         """Record a governed note/caveat that serve should heed.
 
@@ -615,11 +639,26 @@ class AssetBag:
         the original question + its origin (``curator``/``live_chat``) for the
         admin "agreed assumptions" log view. Both default to ``None`` for notes
         created through any other path.
+
+        ``id_hint`` (e.g. an Enhancer's ``concept_name``) mints a stable,
+        concept-based id (``note_<schema>_<slug>``, de-duplicated with a numeric
+        suffix on collision) instead of the default sequential
+        ``note_<schema>_<n>``, so a later duplicate/conflict decision can
+        reference this note by a meaningful id. Omit for the pre-existing
+        sequential scheme.
         """
         summary = (summary or "").strip()
         if not summary:
             return "error: empty note summary"
-        note_id = f"note_{_slug(self.schema)}_{len(self.notes) + 1}"
+        if id_hint:
+            base_id = f"note_{_slug(self.schema)}_{_slug(id_hint)}"
+            note_id = base_id
+            suffix = 2
+            while note_id in self.notes:
+                note_id = f"{base_id}_{suffix}"
+                suffix += 1
+        else:
+            note_id = f"note_{_slug(self.schema)}_{len(self.notes) + 1}"
         # A note stamped with clarification provenance also gets a built_at
         # timestamp (fold time) for the log view — the ledger itself carries no
         # answered-at timestamp today.
@@ -647,14 +686,39 @@ class AssetBag:
         self.notes[note_id] = asset
         return f"ok: wrote {note_id}"
 
-    def record_caveats(self, records: Iterable[ClarificationRecord]) -> int:
+    def record_caveats(
+        self, records: Iterable[ClarificationRecord], *, chat: "ChatClient | None" = None
+    ) -> int:
         """Fold answered clarifications that don't map to an asset (``pair:`` /
-        ``query:`` scopes — trap/annotation-error findings) into governance
-        ``NoteAsset``s, so the caveat reaches the served corpus instead of dying
-        in the ledger. Runs after both fold modes (deterministic + agent).
-        Returns the number of notes recorded.
+        ``query:``/``live_chat:`` scopes — trap/annotation-error findings and
+        live ``ask_user`` answers) into governance assets, so the caveat reaches
+        the served corpus instead of dying in the ledger. Runs after both fold
+        modes (deterministic + agent). Returns the total number of records
+        handled (created + duplicate + conflict + legacy-fallback — see
+        :meth:`record_caveats_detail` for the breakdown).
+
+        ``chat`` enables the Round-A Enhancer (see ``curator.enhancer``): each
+        caveat is generalized/deduped against the schema's existing notes and
+        metrics before folding, instead of writing the literal answer text as a
+        fresh ``NoteAsset`` every time (the bug that produced 3 separate,
+        partially-contradictory "revenue" notes from 3 rephrasings of the same
+        question). ``chat=None`` (the default) keeps the legacy verbatim-note
+        behavior — every pre-existing caller/test round-trips unchanged.
         """
-        n = 0
+        return self.record_caveats_detail(records, chat=chat).total
+
+    def record_caveats_detail(
+        self, records: Iterable[ClarificationRecord], *, chat: "ChatClient | None" = None
+    ) -> "CaveatFoldCounts":
+        """Same fold as :meth:`record_caveats`, returning the created/
+        duplicate/conflict/legacy breakdown instead of a single count.
+
+        This is the hook later rounds build on: Round B reinforces the
+        ``duplicate_of`` target instead of no-op'ing; Round C surfaces
+        ``conflict_with`` for human review instead of just logging it.
+        """
+        counts = CaveatFoldCounts()
+        enhancer = Enhancer(chat) if chat is not None else None
         for rec in records:
             if rec.status is not ClarificationRecordStatus.answered:
                 continue
@@ -665,18 +729,107 @@ class AssetBag:
                 parse_scope(rec.scope)  # table:/column: scopes are handled by the fold
                 continue
             except ValueError:
-                pass  # non-asset scope (pair:/query:/…) → record as a caveat
-            msg = self.propose_note(
-                text,
-                kind=NoteKind.context,
+                pass  # non-asset scope (pair:/query:/live_chat:/…) → record as a caveat
+            self._fold_one_caveat(rec, text, enhancer, counts)
+        return counts
+
+    def _fold_one_caveat(
+        self,
+        rec: ClarificationRecord,
+        text: str,
+        enhancer: "Enhancer | None",
+        counts: "CaveatFoldCounts",
+    ) -> None:
+        by = rec.answered_by or "sme"
+        if enhancer is not None:
+            try:
+                decision = enhancer.decide(
+                    rec,
+                    existing_notes=list(self.notes.values()),
+                    existing_metrics=list(self.metrics.values()),
+                    known_tables=[t.physical_name for t in self.tables.values()],
+                )
+            except EnhancerError as err:
+                logger.warning(
+                    "Enhancer failed for clarification %s; falling back to verbatim note: %s",
+                    rec.id,
+                    err,
+                )
+                decision = None
+            if decision is not None:
+                self._apply_enhancer_decision(rec, by, decision, counts)
+                return
+        # chat is None, or the Enhancer errored: legacy verbatim-note fallback.
+        msg = self.propose_note(
+            text,
+            kind=NoteKind.context,
+            certified=True,
+            answered_by=by,
+            source_question=rec.question,
+            source_kind=rec.source,
+        )
+        if msg.startswith("ok:"):
+            counts.legacy += 1
+
+    def _apply_enhancer_decision(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+        counts: "CaveatFoldCounts",
+    ) -> None:
+        known_ids = self._all_asset_ids()
+        if decision.duplicate_of and decision.duplicate_of in known_ids:
+            logger.info(
+                "clarification %s recognized as a duplicate of %s; no new asset written "
+                "(Round B will reinforce the existing asset)",
+                rec.id,
+                decision.duplicate_of,
+            )
+            counts.duplicate += 1
+            return
+        if decision.conflict_with and decision.conflict_with in known_ids:
+            logger.warning(
+                "clarification %s CONFLICTS with existing asset %s ('%s'); not overwriting "
+                "— flagged for human review (Round C)",
+                rec.id,
+                decision.conflict_with,
+                decision.generalized_definition,
+            )
+            counts.conflict += 1
+            return
+        # Genuinely new concept (or a duplicate_of/conflict_with id the Enhancer
+        # hallucinated — never points at a real asset, so treat as new rather
+        # than silently dropping the clarification).
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            msg = self.upsert_metric(
+                decision.concept_name,
+                decision.base_table,
+                decision.expression,
+                confidence=0.75,
                 certified=True,
-                answered_by=rec.answered_by or "sme",
-                source_question=rec.question,
-                source_kind=rec.source,
+                answered_by=answered_by,
             )
             if msg.startswith("ok:"):
-                n += 1
-        return n
+                counts.created += 1
+                return
+            logger.warning(
+                "Enhancer proposed metric for clarification %s could not be written (%s); "
+                "recording as a note instead",
+                rec.id,
+                msg,
+            )
+        msg = self.propose_note(
+            decision.generalized_definition,
+            kind=NoteKind.context,
+            certified=True,
+            answered_by=answered_by,
+            source_question=rec.question,
+            source_kind=rec.source,
+            id_hint=decision.concept_name,
+        )
+        if msg.startswith("ok:"):
+            counts.created += 1
 
     def _table_id_index(self) -> dict[str, str]:
         """Map a table id or physical name to its canonical table id."""

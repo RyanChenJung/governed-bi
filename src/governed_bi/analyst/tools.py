@@ -103,6 +103,7 @@ def _record_live_clarification_answer(
     deferred: bool = False,
     answer: str,
     corpus: "Corpus | None" = None,
+    chat_model: Any | None = None,
 ) -> None:
     """After ``interrupt`` returns, sync the ledger record with what actually
     happened live: answered records get the answer; a decline or a defer both
@@ -136,14 +137,22 @@ def _record_live_clarification_answer(
             }
         )
         write_clarifications(path, records)
-        _fold_answered_clarifications(corpus_root, corpus)
+        _fold_answered_clarifications(corpus_root, corpus, chat_model)
         return
 
 
-def _fold_answered_clarifications(corpus_root: "Path", corpus: "Corpus | None") -> None:
+def _fold_answered_clarifications(
+    corpus_root: "Path", corpus: "Corpus | None", chat_model: Any | None = None
+) -> None:
     """Best-effort: run the round-10 poll step for every schema this corpus
     covers. Errors are logged, not raised — the ledger write above already
-    durably saved the answer regardless of whether folding succeeds."""
+    durably saved the answer regardless of whether folding succeeds.
+
+    ``chat_model`` (the raw LangChain model already driving this Analyst turn),
+    when given, is wrapped and passed through so the fold's Enhancer (Round A)
+    generalizes/dedupes this answer against existing notes/metrics instead of
+    writing its literal text as a fresh, un-deduplicated note every time.
+    """
     if corpus is None:
         return
     import logging
@@ -151,10 +160,15 @@ def _fold_answered_clarifications(corpus_root: "Path", corpus: "Corpus | None") 
     from ..curator.pipeline import apply_answered_clarifications_to_corpus
 
     logger = logging.getLogger("governed_bi.analyst")
+    chat = None
+    if chat_model is not None:
+        from ..llm.langchain_client import LangChainChatClient
+
+        chat = LangChainChatClient(chat_model)
     schemas = {a.schema for a in corpus.assets if isinstance(a, TableAsset)}
     for schema in schemas:
         try:
-            apply_answered_clarifications_to_corpus(corpus_root, schema)
+            apply_answered_clarifications_to_corpus(corpus_root, schema, chat=chat)
         except Exception:
             logger.exception(
                 "auto-fold of a live-chat-answered clarification into schema %r failed; "
@@ -348,6 +362,7 @@ def make_tools(
     embedder: "Embedder | None" = None,
     enable_clarify: bool = False,
     corpus_root: "Path | None" = None,
+    chat_model: Any | None = None,
 ):
     """Factory: the governed read-only tools closed over deployment deps.
 
@@ -364,6 +379,11 @@ def make_tools(
     (``source="live_chat"``) so it survives past the conversation and shows up for
     an admin to answer later. ``None`` (the default) skips the ledger write
     entirely — used by every caller that predates this feature.
+
+    ``chat_model``, when given, is the raw LangChain model already driving this
+    Analyst turn — reused (no new client) to power the fold Enhancer when
+    ``ask_user``'s answer is folded into the corpus (see
+    ``_fold_answered_clarifications``).
     """
     _ = gateway, identity  # owned by GovernanceMiddleware for data-touching tools
 
@@ -506,6 +526,7 @@ def make_tools(
             deferred=parsed["deferred"],
             answer=answer,
             corpus=corpus,
+            chat_model=chat_model,
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED

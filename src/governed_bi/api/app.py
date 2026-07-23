@@ -481,9 +481,14 @@ def create_app(stack: ServeStack | None = None):
                 if stack.datasource is not None:
                     from ..curator.pipeline import apply_answered_clarifications_to_corpus
 
+                    chat = None
+                    if stack.chat_model is not None:
+                        from ..llm.langchain_client import LangChainChatClient
+
+                        chat = LangChainChatClient(stack.chat_model)
                     try:
                         apply_answered_clarifications_to_corpus(
-                            stack.corpus_root, stack.datasource.corpus_pin
+                            stack.corpus_root, stack.datasource.corpus_pin, chat=chat
                         )
                     except Exception:
                         logger.exception(

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from ..eval.dataset import EvalItem
     from ..gateway import Gateway
     from ..gateway.connectors.base import Connector
+    from ..llm import ChatClient
     from .clarifications import Responder
 
 _READ_TOOLS = frozenset({"read_corpus", "run_probe_query"})
@@ -854,22 +855,32 @@ def build_curated_corpus_with_sme(
     return out_root
 
 
-def apply_answered_clarifications_to_corpus(corpus_root: Path | str, schema: str) -> int:
+def apply_answered_clarifications_to_corpus(
+    corpus_root: Path | str, schema: str, *, chat: "ChatClient | None" = None
+) -> int:
     """Poll step: fold ledger records answered outside the SME fill loop into
     an already-served corpus.
 
     ``fill_clarifications_with_responder`` (and the deterministic fold in
     ``build_curated_corpus_with_sme``) only pick up records answered
     synchronously in that same call. A human admin answering later via
-    ``POST /clarifications/{id}/answer`` (see ``api/app.py``) just rewrites
-    ``clarifications.jsonl`` in place — nothing re-reads it afterwards. This
-    scans that ledger under ``corpus_root`` for ``answered`` records not yet
-    ``converted_to_corpus``, folds them into ``corpus_root``'s ``schema``
-    subtree via the same :meth:`AssetBag.apply_answered_clarifications` /
+    ``POST /clarifications/{id}/answer`` (see ``api/app.py``), or a live-chat
+    ``ask_user`` answer, just rewrites ``clarifications.jsonl`` in place —
+    nothing re-reads it afterwards. This scans that ledger under
+    ``corpus_root`` for ``answered`` records not yet ``converted_to_corpus``,
+    folds them into ``corpus_root``'s ``schema`` subtree via the same
+    :meth:`AssetBag.apply_answered_clarifications` /
     :meth:`AssetBag.record_caveats` logic the SME path uses, writes the
     updated corpus assets, and marks the folded records
     ``converted_to_corpus=True`` so re-running is a no-op. Returns the number
     of records folded.
+
+    ``chat`` (a :class:`~governed_bi.llm.ChatClient`), when given, enables the
+    Round-A Enhancer for the ``record_caveats`` fold — this is what stops a
+    rephrased live-chat clarification from minting a fresh, un-deduplicated
+    ``NoteAsset`` every time (see ``curator.enhancer``). ``None`` (the default)
+    keeps the legacy verbatim-note fold, unchanged for every pre-existing
+    caller/test.
     """
     from ..corpus.loader import load_corpus
     from ..corpus.schemas import TableAsset
@@ -903,7 +914,7 @@ def apply_answered_clarifications_to_corpus(corpus_root: Path | str, schema: str
             bag.rules[asset.id] = asset  # type: ignore[assignment]
 
     applied = bag.apply_answered_clarifications(pending)
-    caveats = bag.record_caveats(pending)
+    caveats = bag.record_caveats(pending, chat=chat)
     if applied or caveats:
         bag.write(corpus_root)
 
