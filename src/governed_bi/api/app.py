@@ -598,6 +598,7 @@ def create_app(stack: ServeStack | None = None):
         from ..gateway import Gateway
         from ..memory import InMemoryWorkingMemory
         from ..analyst.agent import answer_question_agent
+        from ..corpus import load_corpus
 
         if stack.chat_model is None:
             # Agent-only serve (ADR 0002): no deterministic offline fallback. Fail
@@ -616,10 +617,14 @@ def create_app(stack: ServeStack | None = None):
             raise HTTPException(status_code=503, detail="database unavailable")
         try:
             gateway = Gateway(connector)
+            # Reload per turn (same reasoning as graph_app.answer): a live-chat
+            # fold can write new Enhancer assets to stack.corpus_root mid-session,
+            # and this stateless-API's stack is built once at process startup.
+            corpus_analyst = load_corpus(stack.corpus_root).for_analyst()
             answer = answer_question_agent(
                 req.question,
                 stack.identity,
-                corpus=stack.corpus_analyst,
+                corpus=corpus_analyst,
                 gateway=gateway,
                 settings=stack.settings,
                 session_id=req.session_id,

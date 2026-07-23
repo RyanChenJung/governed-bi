@@ -11,6 +11,7 @@ a governed answer, provenance records the clarification, and a decline fails clo
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -62,6 +63,15 @@ def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     test here goes through the real production wiring (``build_chat_graph`` ->
     ``answer_question_agent``) that performs that write.
 
+    ``corpus_root`` also has to actually CONTAIN the ``beer_factory`` schema
+    tables (copied in below), matching real deployment topology where
+    ``ServeStack.corpus_root`` and the tree ``corpus_full`` was built from are
+    the identical directory. The serve-time chat graph reloads the corpus from
+    ``stack.corpus_root`` on every turn (so a live-chat fold's new
+    Enhancer asset is visible mid-session without a process restart); if this
+    fixture's ``corpus_root`` were the bare, table-less ``tmp_path`` it used to
+    be, that per-turn reload would find no tables and refuse every turn.
+
     ``chat_model`` (the main conversation's scripted trajectory) and
     ``enhancer_chat_model`` (the fold Enhancer's own model, see
     ``build_agent_core``) are deliberately two SEPARATE ``FakeToolModel``
@@ -74,7 +84,8 @@ def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     """
     if not BIRD_DB.exists():
         pytest.skip("vendored beer_factory.sqlite not present")
-    corpus_full = load_corpus(CORPUS_ROOT, schema="beer_factory")
+    shutil.copytree(CORPUS_ROOT / "beer_factory", corpus_root / "beer_factory")
+    corpus_full = load_corpus(corpus_root, schema="beer_factory")
     return ServeStack(
         corpus_full=corpus_full,
         corpus_analyst=corpus_full.for_analyst(),

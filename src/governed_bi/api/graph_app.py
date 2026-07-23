@@ -111,6 +111,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
     # parent package), so relative imports would fail at call time.
     from governed_bi.gateway import Gateway
     from governed_bi.analyst.agent import ClarificationPending, answer_question_agent
+    from governed_bi.corpus import load_corpus
     from governed_bi.viz import presenter
     from langgraph.types import interrupt
 
@@ -118,6 +119,14 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
         thread_id = ((config or {}).get("configurable") or {}).get("thread_id") or "default"
         question, history = _split_question_and_history(state["messages"])
         memory = _working_memory_from(history, thread_id)
+
+        # Reload the corpus from disk every turn instead of reusing the
+        # process-lifetime ``stack.corpus_analyst`` snapshot: a live-chat fold
+        # (ask_user answer -> Enhancer -> MetricAsset/NoteAsset) writes new
+        # assets to ``stack.corpus_root`` mid-session, and the long-running
+        # server process would otherwise never see them again. Mirrors what
+        # ``api/app.py``'s ``/corpus/*`` routes already do per request.
+        corpus_analyst = load_corpus(stack.corpus_root).for_analyst()
 
         try:
             writer = get_stream_writer()
@@ -144,7 +153,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                 result = answer_question_agent(
                     question,
                     stack.identity,
-                    corpus=stack.corpus_analyst,
+                    corpus=corpus_analyst,
                     gateway=gateway,
                     settings=stack.settings,
                     session_id=thread_id,
