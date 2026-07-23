@@ -305,9 +305,12 @@ def create_app(stack: ServeStack | None = None):
         when the note was folded from an answered ``ClarificationRecord`` (see
         ``AssetBag.record_caveats``). A readable question→answer log for "what
         has an admin agreed to," distinct from the raw ``/corpus/assets`` editor
-        list.
+        list. Reloaded from disk each call (see ``/corpus/assets`` docstring) so
+        an answer folded moments ago by this same process is visible immediately.
         """
-        rows = presenter.assumption_rows(stack.corpus_full)
+        from ..corpus import load_corpus
+
+        rows = presenter.assumption_rows(load_corpus(stack.corpus_root))
         return [AssumptionRowResponse.model_validate(r) for r in rows]
 
     @app.post("/corpus/edit", response_model=EditResponse, tags=["corpus"])
@@ -471,7 +474,26 @@ def create_app(stack: ServeStack | None = None):
                     }
                 )
                 write_clarifications(path, records)
-                return ClarificationResponse.model_validate(records[i])
+                # Fold immediately rather than leaving this as a separate poll
+                # step (apply_answered_clarifications_to_corpus was previously
+                # CLI/script-only) — an admin answering here should see it land
+                # as an Agreed Assumption right away, not after a manual step.
+                if stack.datasource is not None:
+                    from ..curator.pipeline import apply_answered_clarifications_to_corpus
+
+                    try:
+                        apply_answered_clarifications_to_corpus(
+                            stack.corpus_root, stack.datasource.corpus_pin
+                        )
+                    except Exception:
+                        logger.exception(
+                            "auto-fold of answered clarification %s into the corpus failed; "
+                            "the answer is saved but not yet reflected as an assumption",
+                            clarification_id,
+                        )
+                records = load_clarifications(path)
+                answered = next(r for r in records if r.id == clarification_id)
+                return ClarificationResponse.model_validate(answered)
         raise HTTPException(status_code=404, detail="unknown clarification id")
 
     @app.post("/chat", response_model=AnswerResponse, tags=["chat"])
