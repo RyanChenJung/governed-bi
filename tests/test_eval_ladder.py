@@ -444,6 +444,76 @@ def test_apply_answered_clarifications_to_corpus_matches_sme_fold(tmp_path: Path
     assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
 
 
+def test_apply_answered_clarifications_to_corpus_folds_live_chat_source(tmp_path: Path):
+    """Round 8: a live ``ask_user`` question (Round 6) logs a
+    ``source="live_chat"`` ledger record with scope ``live_chat:<id>`` (not a
+    ``table:`` scope), and answering it from the admin tab — same
+    ``POST /clarifications/{id}/answer`` route a curator-sourced record uses —
+    should fold identically: ``apply_answered_clarifications_to_corpus`` runs
+    generically over every answered record regardless of ``source``. Since the
+    scope doesn't match ``table:Name[.col]``, it takes the ``record_caveats``
+    path (like any other non-asset-scoped record) and lands as a NoteAsset,
+    proving the fold isn't filtered or special-cased by source.
+    """
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+
+    # Shape produced by tools.py's _log_live_clarification + the ledger sync
+    # after the live user answers: source="live_chat", scope="live_chat:<id>"
+    # (not "table:..."), answered_by="live_chat_user".
+    live_chat_rec = ClarificationRecord(
+        id="q_live_001",
+        scope="live_chat:q_live_001",
+        question="Should refunds count as negative revenue or be excluded?",
+        status=ClarificationRecordStatus.answered,
+        answer="Exclude refunds from revenue entirely.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+    write_clarifications(clarifications_path(corpus_root), [live_chat_rec])
+
+    folded = apply_answered_clarifications_to_corpus(corpus_root, schema)
+    # Folded via record_caveats (non-"table:" scope), not apply_answered_clarifications.
+    assert folded == 1
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    notes = [a for a in corpus.assets if isinstance(a, NoteAsset)]
+    assert len(notes) == 1
+    assert notes[0].summary == "Exclude refunds from revenue entirely."
+
+    # Idempotent, same as the curator-sourced path.
+    records = load_clarifications(clarifications_path(corpus_root))
+    assert records[0].converted_to_corpus is True
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
+
+
 def test_deep_agent_invoke_receives_tracing_callbacks(bird_connector, tmp_path: Path, monkeypatch):
     """The curator deep agent must run with Langfuse callbacks in its config, or
     its (majority) LLM volume is invisible to the dashboard. Regression guard."""

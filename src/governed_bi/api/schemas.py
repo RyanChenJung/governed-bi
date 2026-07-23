@@ -342,6 +342,7 @@ class ClarificationResponse(_View):
     answer: str | None
     answer_choice_id: str | None
     answered_by: str | None
+    source: str  # "curator" | "live_chat"
 
 
 class ClarificationAnswerRequest(BaseModel):

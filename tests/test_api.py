@@ -574,6 +574,37 @@ def _clarifications_client(tmp_path, **flags):
     return TestClient(create_app(stack))
 
 
+def test_list_clarifications_merges_curator_and_live_chat_sources(tmp_path):
+    """Round 6 appends ``source="live_chat"`` records into the SAME
+    clarifications.jsonl ledger the curator's own ``source="curator"``
+    (default) records live in. Round 8 verifies the pre-existing
+    ``GET /clarifications`` route already returns both, unfiltered by
+    source — the merge is automatic at the data layer, no route change
+    needed. Also checks the API response shape now exposes ``source``."""
+    from governed_bi.curator.clarifications import ClarificationRecord, write_clarifications
+
+    stack = replace(build_stack(), corpus_root=tmp_path, can_edit=True, edit_mode="file")
+    write_clarifications(
+        tmp_path / "clarifications.jsonl",
+        [
+            ClarificationRecord.model_validate(_FIXTURE_RECORDS[0]),  # source defaults "curator"
+            ClarificationRecord(
+                id="q_live_001",
+                scope="live_chat:q_live_001",
+                question="Should refunds count as negative revenue?",
+                source="live_chat",
+            ),
+        ],
+    )
+    client = TestClient(create_app(stack))
+    r = client.get("/clarifications")
+    assert r.status_code == 200
+    by_id = {rec["id"]: rec for rec in r.json()}
+    assert by_id.keys() == {"q001", "q_live_001"}
+    assert by_id["q001"]["source"] == "curator"
+    assert by_id["q_live_001"]["source"] == "live_chat"
+
+
 def test_list_clarifications_filters_by_status(tmp_path):
     client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
     r = client.get("/clarifications", params={"status": "open"})
