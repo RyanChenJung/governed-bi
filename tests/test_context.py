@@ -37,8 +37,8 @@ def _context(corpus, question):
     return assemble_context(corpus, retrieval, licensed_table_ids=licensed_ids), retrieval
 
 
-def test_governance_rules_reach_context_by_licensed_scope():
-    # A global rule always applies; a table-scoped rule applies only when its
+def test_always_notes_reach_context_by_licensed_scope():
+    # A global note always applies; a table-scoped note applies only when its
     # table is licensed. This is the wiring that carries Phase B SME caveats into
     # the agent's seeded context (they were previously dropped by retrieval).
     from governed_bi.corpus import Corpus
@@ -46,8 +46,7 @@ def test_governance_rules_reach_context_by_licensed_scope():
         Column,
         LogicalType,
         Reliability,
-        RuleAsset,
-        RuleKind,
+        NoteAsset,
         TableAsset,
     )
     from governed_bi.retrieval import RetrievalResult
@@ -74,20 +73,136 @@ def test_governance_rules_reach_context_by_licensed_scope():
         assets=[
             licensed_tbl,
             other_tbl,
-            RuleAsset(id="rule_global", kind=RuleKind.business_rule, scope=[], statement="always exclude test rows"),
-            RuleAsset(id="rule_scoped", kind=RuleKind.context, scope=["tbl_s_orders"], statement="amount is in cents"),
-            RuleAsset(id="rule_offscope", kind=RuleKind.context, scope=["tbl_s_other"], statement="should not appear"),
+            NoteAsset(id="note_global", kind="business_rule", scope=[], summary="always exclude test rows"),
+            NoteAsset(id="note_scoped", kind="context", scope=["tbl_s_orders"], summary="amount is in cents"),
+            NoteAsset(id="note_offscope", kind="context", scope=["tbl_s_other"], summary="should not appear"),
+            NoteAsset(
+                id="note_on_match",
+                kind="routing",
+                scope=["tbl_s_orders"],
+                summary="on-match should not appear",
+            ),
         ]
     )
     retrieval = RetrievalResult(question="q", table_ids=["tbl_s_orders"])
     ctx = assemble_context(corpus, retrieval, licensed_table_ids=frozenset({"tbl_s_orders"}))
 
-    assert any("always exclude test rows" in r for r in ctx.rules)  # global
-    assert any("amount is in cents" in r for r in ctx.rules)  # scoped to a licensed table
-    assert not any("should not appear" in r for r in ctx.rules)  # scoped elsewhere
+    assert any("always exclude test rows" in r for r in ctx.rules)  # global must_honour
+    assert any("amount is in cents" in r for r in ctx.advisory_notes)  # context → advisory
+    assert not any("should not appear" in r for r in ctx.rules + ctx.advisory_notes)
     block = ctx.render()
-    assert "## Governance rules (must honour)" in block
+    assert "## Governance notes (must honour)" in block
+    assert "## Governance notes (advisory)" in block
     assert "amount is in cents" in block
+    assert "on-match should not appear" not in block
+
+
+def test_five_scope_kinds_and_on_match_injection():
+    from governed_bi.corpus import Corpus
+    from governed_bi.corpus.ids import derive_column_id
+    from governed_bi.corpus.schemas import (
+        Column,
+        JoinAsset,
+        LogicalType,
+        MetricAsset,
+        NoteAsset,
+        Reliability,
+        TableAsset,
+    )
+    from governed_bi.retrieval import RetrievalResult
+
+    def _tbl(tid: str, schema: str = "s") -> TableAsset:
+        return TableAsset(
+            id=tid,
+            schema=schema,
+            physical_name=tid.split("_")[-1],
+            columns=[
+                Column(
+                    physical_name="x",
+                    physical_type="INTEGER",
+                    logical_type=LogicalType.integer,
+                    nullable=True,
+                    is_unique=False,
+                    reliability=Reliability(),
+                )
+            ],
+        )
+
+    orders = _tbl("tbl_s_orders")
+    col_id = derive_column_id(orders.id, "x")
+    metric = MetricAsset(
+        id="metric_s_total", name="total", base_table=orders.id, expression="SUM(x)"
+    )
+    join = JoinAsset(
+        id="join_orders_other",
+        left_table="tbl_s_orders",
+        right_table="tbl_s_other",
+        on="orders.x = other.x",
+    )
+    other = _tbl("tbl_s_other")
+    corpus = Corpus(
+        assets=[
+            orders,
+            other,
+            metric,
+            join,
+            NoteAsset(
+                id="note_col",
+                kind="context",
+                scope=[col_id],
+                summary="column-scoped note",
+            ),
+            NoteAsset(
+                id="note_metric",
+                kind="context",
+                scope=["metric_s_total"],
+                summary="metric-scoped note",
+            ),
+            NoteAsset(
+                id="note_schema",
+                kind="context",
+                scope=["schema:s"],
+                summary="schema-scoped note",
+            ),
+            NoteAsset(
+                id="note_db",
+                kind="context",
+                scope=["db:main"],
+                summary="db-scoped note",
+            ),
+            NoteAsset(
+                id="note_match",
+                kind="routing",
+                scope=["tbl_s_orders"],
+                summary="on-match routed",
+                body="long body detail",
+                activation="on_match",
+            ),
+            NoteAsset(
+                id="note_unmatched",
+                kind="routing",
+                scope=["tbl_s_orders"],
+                summary="should stay out",
+                activation="on_match",
+            ),
+        ]
+    )
+    retrieval = RetrievalResult(
+        question="q",
+        table_ids=["tbl_s_orders"],
+        note_ids=["note_match"],
+    )
+    ctx = assemble_context(
+        corpus, retrieval, licensed_table_ids=frozenset({"tbl_s_orders"}), db_name="main"
+    )
+    blob = "\n".join(ctx.rules + ctx.advisory_notes)
+    assert "column-scoped note" in blob
+    assert "metric-scoped note" in blob
+    assert "schema-scoped note" in blob
+    assert "db-scoped note" in blob
+    assert "on-match routed" in blob
+    assert "long body detail" in blob
+    assert "should stay out" not in blob
 
 
 def test_allowed_table_names_match_licensed_physical_names(corpus):
@@ -144,8 +259,8 @@ def test_render_lists_only_licensed_tables_and_is_a_string(corpus):
     assert "## Tables (use ONLY these physical identifiers)" in text
     assert "transaction" in text
     # rootbeerreview is 3 hops out -> not licensed -> must not be presented AS A
-    # TABLE. (Skill prose may still mention it by name, which is fine; the guardrail
-    # scope is allowed_table_names, not the free text.)
+    # TABLE. Note prose may still mention it by name; guardrail scope comes from
+    # allowed_table_names, not free text.
     assert "rootbeerreview" not in ctx.allowed_table_names()
     assert "### rootbeerreview" not in text
 
@@ -190,5 +305,4 @@ def test_empty_retrieval_yields_empty_but_valid_context(corpus):
     assert isinstance(ctx, PromptContext)
     assert ctx.tables == []
     assert ctx.allowed_table_names() == frozenset()
-    # Skills are corpus-global, so they still render; the table section is empty.
     assert "## Tables" in ctx.render()

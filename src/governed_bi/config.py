@@ -88,10 +88,14 @@ class DataSourceConfig:
     here. Set ``dsn_env`` to the name of an environment variable holding the full
     libpq DSN (read at call time), exactly as the API key is handled. ``dsn`` is an
     inline fallback for local, secret-free DSNs only.
+
+    ``db`` is the lake identity for future ``db:`` note-scope sentinels (ADR 0003),
+    not the SQL schema pin — that is ``corpus_pin`` / ``schema``.
     """
 
     kind: str = "sqlite"  # sqlite | postgres | redshift
     corpus_pin: str = "beer_factory"  # default corpus schema subtree / BIRD db_id
+    db: str = "main"  # lake identity for db: scope sentinels (≠ corpus_pin)
     sqlite_path: str = "data/bird/beer_factory.sqlite"  # kind=sqlite; repo-root-relative
     dsn: str | None = None  # kind=postgres/redshift: inline DSN (local, secret-free only)
     dsn_env: str | None = None  # ...or the env var holding the DSN (preferred)
@@ -192,6 +196,30 @@ class Settings:
     allow_edit: bool = True  # corpus file-write; for_env sets False in prod
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
 
+    # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
+    conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
+    conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
+    conversation_checkpointer_dsn_env: str | None = None  # env var name; never inline DSN
+    run_log_kind: str = "sqlite"  # sqlite | jsonl | off
+    run_log_path: str = "data/logs/runs.sqlite"
+
+    # ── Always-note prompt budget (ADR 0003 H1; see [notes] in TOML) ──
+    always_note_global_max: int = 8
+    always_note_char_max: int = 2000
+
+    # ── PIN trigger authority (ADR 0003 H2; R7/R8) ──
+    # When True, keyword PINs can affect schema shortlist / selected (prod needs
+    # certified-only graduation — see pin_require_certified).
+    pin_triggers_enabled: bool = False
+    pin_require_certified: bool = True  # prod default; dev may set False
+    pin_max: int = 3
+
+    # ── Full-content run log (ADR 0004 H11; M5) ──
+    log_full_content: bool = False
+    log_full_content_ack: bool = False  # required True in prod when log_full_content
+    log_row_previews: bool = False  # Tier C; needs log_full_content too
+    log_full_content_ttl_days: int = 30
+
     @classmethod
     def for_env(
         cls,
@@ -203,6 +231,11 @@ class Settings:
         can_stream: bool | None = None,
         allow_edit: bool | None = None,
         cors_origins: tuple[str, ...] | None = None,
+        conversation_checkpointer_kind: str | None = None,
+        conversation_checkpointer_path: str | None = None,
+        conversation_checkpointer_dsn_env: str | None = None,
+        run_log_kind: str | None = None,
+        run_log_path: str | None = None,
     ) -> "Settings":
         env = Environment(environment)
         base: dict[str, Any] = {}
@@ -218,6 +251,16 @@ class Settings:
             base["allow_edit"] = allow_edit
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
+        if conversation_checkpointer_kind is not None:
+            base["conversation_checkpointer_kind"] = conversation_checkpointer_kind
+        if conversation_checkpointer_path is not None:
+            base["conversation_checkpointer_path"] = conversation_checkpointer_path
+        if conversation_checkpointer_dsn_env is not None:
+            base["conversation_checkpointer_dsn_env"] = conversation_checkpointer_dsn_env
+        if run_log_kind is not None:
+            base["run_log_kind"] = run_log_kind
+        if run_log_path is not None:
+            base["run_log_path"] = run_log_path
         if env is Environment.dev:
             return cls(
                 environment=env,
@@ -400,6 +443,16 @@ def load_settings(
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
 
+    # Optional [logging] table (ADR 0004 checkpointer + portable run log).
+    logging_tbl = data.get("logging", {})
+    ckpt_kind = logging_tbl.get("conversation_checkpointer_kind")
+    ckpt_path = logging_tbl.get("conversation_checkpointer_path")
+    ckpt_dsn_env = logging_tbl.get("conversation_checkpointer_dsn_env")
+    run_log_kind = logging_tbl.get("run_log_kind")
+    run_log_path = logging_tbl.get("run_log_path")
+
+    notes_tbl = data.get("notes", {})
+
     settings = Settings.for_env(
         env,
         models=models,
@@ -408,7 +461,42 @@ def load_settings(
         can_stream=can_stream,
         allow_edit=allow_edit,
         cors_origins=cors_origins,
+        conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
+        conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,
+        conversation_checkpointer_dsn_env=(
+            str(ckpt_dsn_env) if ckpt_dsn_env is not None else None
+        ),
+        run_log_kind=str(run_log_kind) if run_log_kind is not None else None,
+        run_log_path=str(run_log_path) if run_log_path is not None else None,
     )
+
+    knob_overrides: dict[str, Any] = {}
+    for src, keys in (
+        (
+            notes_tbl,
+            (
+                "always_note_global_max",
+                "always_note_char_max",
+                "pin_triggers_enabled",
+                "pin_require_certified",
+                "pin_max",
+            ),
+        ),
+        (
+            logging_tbl,
+            (
+                "log_full_content",
+                "log_full_content_ack",
+                "log_row_previews",
+                "log_full_content_ttl_days",
+            ),
+        ),
+    ):
+        for k in keys:
+            if k in src:
+                knob_overrides[k] = src[k]
+    if knob_overrides:
+        settings = replace(settings, **knob_overrides)
 
     # Optional [runtime] overrides for the environment toggles, so a deployment
     # can soft-warn on suspect columns without switching the whole env.

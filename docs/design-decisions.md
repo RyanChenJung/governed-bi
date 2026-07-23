@@ -2,7 +2,7 @@
 
 _[English](design-decisions.md) · [简体中文](design-decisions.zh.md)_
 
-Settled decisions D1-D16 for the [Agentic BI System](system-overview.md), with
+Settled decisions D1-D18 for the [Agentic BI System](system-overview.md), with
 the alternatives considered and the trade-offs. The **ADR-grade** ones are hard
 to reverse. Treat them as ADRs.
 
@@ -177,7 +177,7 @@ Fit: the obfuscation dimensions *are* our target failure modes. Decoy = concept�
 > source of truth.** Every other store (graph / vector / BM25 / Postgres) is a
 > **derived, rebuildable projection**, never authored directly, Neo4j included.
 
-- **Asset types (YAML):** `table`, `column`, `join`, `few_shot`, `term`, `metric`, `rule`/`context`, `negative_example`; **markdown** for skills / gotchas / query-patterns. CI enforces reference integrity (`term→metric→column→table` all resolve) and regex IDs (`tbl_<schema>_<name>`, …). That check doubles as the curator's machine-checkable "done-enough" signal.
+- **Asset types (YAML):** `table`, `column`, `join`, `few_shot`, `term`, `metric`, `note`, `negative_example`. CI enforces reference integrity (`term→metric→column→table` and `note.scope[]` all resolve, including `schema:` / `db:` sentinels) and regex IDs (`tbl_<schema>_<name>`, `note_<name>`, …). That check doubles as the curator's machine-checkable "done-enough" signal. (D17: `rule`/`skill` → `note`; see [D17](#d17-governed-notes--tri-modal-retrieval).)
 - **Column reliability is prose, not a flag.** No `decoy: true`. The curator writes a free-text **reliability caveat** ("UNRELIABLE: DO NOT USE" plus a reason) inferred from data evidence. *Same mechanism in BIRD and enterprise deployments.* In BIRD the decoy manifest lets us *grade* it (decoy-recall / decoy-touch); in the enterprise setting nobody knows ground truth, but the same inference runs. Transferability is the deciding reason.
 - **BIRD scope is not only structure.** BIRD ships an `evidence` field (external-knowledge hints ≈ lightweight rules / derived metrics), so the curator also generates `metric`/`rule`/`term`/`context` for BIRD, seeded by evidence. These are scored end-to-end by EX (`baseline` vs `curated`), with **no per-asset gold** for those (gold stays limited to names, FK, and decoy-exclusions per D4). **Synonyms (`term`/`term_relationship`) are in-scope for BIRD too**: the obfuscation's *rewrite* dimension means one concept gets asked multiple ways, so synonym mappings aid paraphrase-robust retrieval. They're consumed via the dictionary engine or in-memory, still no Neo4j.
 - **Graph is a projection (in-memory built; Neo4j deferred).** `join` (+ `term_relationship`, + metric/column lineage) project into a property graph. BIRD uses an **in-memory graph** (networkx) for Steiner-tree planning; **that projection and the Steiner join planner are built** (the planner cost model is a tunable heuristic). **Neo4j is an optional derived projection** for enterprise scale (and a stated learning goal), rebuilt from YAML by a loader, and stays deferred.
@@ -537,3 +537,94 @@ Raised by an independent project review (2026-07-09). Recorded here so each item
   `.pyc`) is a maintainability signal to clean up opportunistically, not a decision.
   R9 (egress/privacy — "send everything," ADR 0002 Q5) remains deferred to the
   enterprise-fork scope. *Status: unchanged (deferred / cleanup).*
+
+## D17: Governed Notes + Tri-modal Retrieval
+
+> **Decided (2026-07-22); M3 + M4 landed 2026-07-22.** Full rationale,
+> data model, and phased migration in
+> [ADR 0003](adr/0003-governed-notes-tri-modal-retrieval.md); build order in
+> [the implementation plan](plans/implementation-plan-notes-and-run-logging.md).
+> M3 shipped the schema, storage, and CI; M4 added trigger PIN (default-off),
+> injection wiring, the agent-fetch tools, and offline gates. Phase 6 (max-pool
+> vector) stays deferred; see "Status" below.
+>
+> The `skill` asset is **deleted** and `RuleAsset` is **generalized into
+> `NoteAsset`**: one governed annotation attachable to any asset **or** namespace
+> (schema/db via `schema:` / `db:` scope sentinels; table/column/metric/join via
+> asset id). A "rule" becomes a note with `activation=always` and
+> `normative_force=must_honour`. This closes the two data-lake gaps diagnosed
+> 2026-07-21: routing never consulted skills (they were excluded from
+> `schema_documents` and injected only post-route), and nothing created them
+> (skill sat outside the `Asset` union, so it was never
+> indexed/validated/adversaried).
+
+- **Retrieval becomes tri-modal, with an explicit pin-vs-blend contract.**
+  (1) *Semantic*: each note carries its own vector and blends into RRF normally,
+  so it never dilutes a table/schema vector. (2) *Regex/keyword triggers*: PIN,
+  never blend. A trigger hard-includes its target and no lexical score enters RRF,
+  respecting the measured "RRF-of-weak-lexical hurts" finding (recall@3 0.535 <
+  embedding 0.70). (3) *Agent-fetch*: new read-only, non-licensing `read_notes` /
+  `grep_notes` tools, safe by topology.
+- **Governance upgrade.** As an `Asset`-union member, `NoteAsset` inherits the
+  three field tiers, the `for_analyst` audit-strip, `Provenance`, `validate_corpus`,
+  and a `Governance` block, which `RuleAsset`/`NegativeExampleAsset` lack today
+  (a `governance:` key is *rejected at parse* under `extra="forbid"`, so D6
+  exclusion cannot be authored for a rule at all; this fixes that). Uncertified
+  notes get **zero** routing-order authority, since a wrong note could evict the
+  correct schema from `top_k`; hard-PIN is certified-gated with dev-graduation.
+- **Relation to D9 / D15 / D16.** Refines the **D9** corpus contract
+  (`rules/` → `notes/`, a new `note` asset_type) and the **D15** schema router
+  (schema-scoped notes finally reachable by routing); the agent-fetch tools slot
+  into the **D16** read-only tool set.
+- **Locked decisions (2026-07-22):**
+  - **C2 (fields):** three fields, `kind` + `activation` (`always`/`on_match`)
+    + `normative_force` (`must_honour`/`advisory`), not one derived
+    `enforcement`; a validator defaults `activation`/`normative_force` from
+    `kind`, both overridable.
+  - **C3 (progressive disclosure):** `summary` (required, embeds and
+    always-injects) + `body` (optional, on-demand only) replace
+    `title`/`statement`; `summary` is author-written, not auto-derived; a
+    note round-trips to one YAML file with `body` as a block scalar.
+  - **Q2 (scope encoding):** sentinel strings now, `schema:<name>` /
+    `db:<name>` prefixes, `[]` for global; asset ids never contain `:`.
+  - **C1 (publication status):** a serve-visible Inference-tier field on
+    `NoteAsset`, surviving `for_analyst`; a validator cross-checks it against
+    `audit.provenance.status` when `Audit` is present.
+  - **H1 (budget + precedence):** at most 8 global `always` notes AND at most
+    2000 chars of total injected notes text, plus a 5-tuple precedence rule
+    for overflow/conflict.
+- **Status: Phase 1–5 largely implemented (M3+M4).** `NoteAsset` shipped;
+  always + on_match injection (5 scopes), H1 budget/precedence, `read_notes` /
+  `grep_notes`, C5 excluded-id scan, keyword PIN with certified gate + offline
+  GATE-RECALL / GATE-ADV-WRONG-NOTE. Phase 6 max-pool vector deferred (only if
+  recall still caps EX). LLM `refute()` for non-notes remains model-gated;
+  notes have an offline structural `refute()`. See ADR 0003 and the
+  [implementation plan](plans/implementation-plan-notes-and-run-logging.md).
+  ADR 0003's design questions are resolved (see locked decisions above).
+
+## D18: Local-first Conversation + Run Logging
+
+> **Decided (2026-07-21); M2 implemented, M5 gated full-content in progress.**
+> Full rationale in [ADR 0004](adr/0004-local-first-conversation-run-logging.md).
+>
+> Durable, **frontend-agnostic** conversation history plus per-turn metadata,
+> owned in the DeepAgents/LangGraph backend so every client (UI, CLI, eval)
+> inherits it. LangGraph's native persistence is the store: a durable
+> checkpointer (`SqliteSaver` local / `PostgresSaver` prod) holds conversation
+> state on the LangGraph-Server / `useStream` path; the plain REST `/chat` route
+> is stateless by design and is a separate follow-on step.
+
+- **Metadata at ADR 0002's existing seams.** Tokens via `wrap_model_call`
+  reading `usage_metadata` into a `token_usage` channel; `duration_ms` + ts on
+  each ledger entry; per-turn roll-up written by `finalize_and_log`, plus a
+  portable append (SQLite / JSONL) outside the version-coupled checkpoint schema.
+- **Two owner invariants.** The log is **write-only during a run**. Default is
+  **metadata-only** (H11): no verbatim question/SQL/answer; ledger strips
+  `sql`/`result`. Full content is opt-in (`log_full_content`) with tiers, TTL
+  prune, POSIX file perms, and a prod ack (`log_full_content_ack`) that fails
+  loud at `build_stack` when missing.
+- **Scope: serve conversations AND DeepAgents runs** (curator/SME), on one
+  mechanism: one thread plus one portable record per run.
+- **Status: M2 metadata logging shipped; M5 adds gated full-content + deep-agent
+  run records + durable `clarify_checkpointer`.** REST `/chat` durability remains
+  a follow-on.

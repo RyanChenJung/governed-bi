@@ -31,7 +31,7 @@ CI 来完成（开发环境），也可以由企业应用来完成（生产环�
 | 资产 schema（用于 schema 驱动的表单） | 本仓库（`corpus/schemas`） |
 | 将编辑结果序列化回 YAML | 本仓库（`corpus/serialize.write_corpus`） |
 | 在 PR 上做校验（CI 关卡） | 本仓库（`corpus/validate` + CLI） |
-| 只读审计面（health / tables / assets / skills / ask） | 本仓库（`viz/presenter` + `governed_bi.api`） |
+| 只读审计面（health / tables / assets / notes / ask） | 本仓库（`viz/presenter` + `governed_bi.api`） |
 | 交互式编辑表单 + git/PR 编排 | 下游工具 / 企业应用 |
 
 ## 写入路径（下游）
@@ -78,9 +78,8 @@ CI 来完成（开发环境），也可以由企业应用来完成（生产环�
   列数、被排除资产数、低置信度连接数。
 - **表视图**。Facts 与 Inference 并排展示；标记为 `suspect` 和 `excluded` 的列会
   附带原因；并显示逐列的溯源状态。
-- **资产**。非表类资产（连接、指标、术语、规则、few-shot 示例、反例），可按类型
+- **资产**。非表类资产（连接、指标、术语、笔记、few-shot 示例、反例），可按类型
   筛选，并显示溯源状态。
-- **技能**。以渲染后的 markdown 呈现。
 
 设计愿景，尚未在本仓库实现（更完整的审计面，或下游产品）：
 

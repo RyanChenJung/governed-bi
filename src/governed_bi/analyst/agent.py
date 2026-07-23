@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from langchain.agents import create_agent
@@ -48,6 +49,7 @@ from .governance import (
     missing_edge_refusal,
     narrate_answer,
 )
+from .run_log import FinalizeCtx, amend_run_tokens, finalize_and_log, new_run_id
 from .middleware import (
     AGENT_RECURSION_LIMIT,
     GovernanceHardStop,
@@ -198,15 +200,25 @@ def build_agent_core(
     )
     # Sequential tools: also bind at construction; middleware re-asserts per call (G1).
     bound_model = model
-    if hasattr(model, "bind") and _supports_parallel_tool_calls(model):
-        bound_model = model.bind(parallel_tool_calls=False)
-    return create_agent(
+    if (
+        hasattr(model, "bind")
+        and _supports_parallel_tool_calls(model)
+        and not isinstance(getattr(model, "responses", None), list)
+    ):
+        try:
+            bound_model = model.bind(parallel_tool_calls=False)
+        except Exception:
+            bound_model = model
+    return_agent = create_agent(
         model=bound_model,
         tools=tools,
         middleware=[mw],
         system_prompt=system_prompt,
         checkpointer=checkpointer,
     )
+    # L4: agent_core drains failed_model_calls after a raised model call.
+    return_agent._gov_middleware = mw  # type: ignore[attr-defined]
+    return return_agent
 
 
 def extract_final_sql(
@@ -247,6 +259,8 @@ def build_serve_rails(
     clarify_checkpointer: Any = None,
     clarify_thread: str | None = None,
     clarify_resume: Any = None,
+    run_id: str | None = None,
+    n_human: int = 1,
 ):
     """Compile the outer deterministic StateGraph wrapping the agent core.
 
@@ -305,7 +319,21 @@ def build_serve_rails(
     # emits the {seq,kind,step,status,detail} contract, never the legacy {stage}
     # shape governance.py's on_event helpers still accept but which agent.py never
     # feeds a callback into (docs/plans/agent-step-visualization.md).
-    events = GovEventStream(on_event)
+    _run_id = run_id or new_run_id()
+    _t0 = time.perf_counter()
+    _finalize_ctx = FinalizeCtx(
+        settings=settings,
+        run_id=_run_id,
+        thread_id=session_id,
+        n_human=n_human,
+        model=getattr(settings.models, "llm_model", None),
+        serve_path="agent",
+        t0=_t0,
+    )
+    events = GovEventStream(on_event, finalize_ctx=_finalize_ctx)
+    # Per-invoke turn counter so a reused rails graph (eval agent_solver) mints a
+    # fresh turn_id / run_id each question instead of UPSERT-colliding on eval:1.
+    _turn_n = [n_human - 1]
 
     def _column_count(table_id: str) -> int:
         asset = corpus.by_id(table_id)
@@ -324,7 +352,17 @@ def build_serve_rails(
 
     def ingest(state: ServeRailsState) -> dict:
         events.reset()  # new turn: fresh seq + serve_path tag
+        _turn_n[0] += 1
         question = state["question"]
+        if events._finalize_ctx is not None:
+            events._finalize_ctx = replace(
+                events._finalize_ctx,
+                run_id=new_run_id(),
+                n_human=_turn_n[0],
+                t0=time.perf_counter(),
+                token_usage=[],
+                question=question,
+            )
         route = route_intent(question)
         bound_terms = bind_terms(corpus, question)
         base = {
@@ -352,7 +390,7 @@ def build_serve_rails(
                     "negative_example": negative.id,
                 },
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         events.rail("refuse_gate", "ok")
         return {"outcome": "continue"}
@@ -386,10 +424,16 @@ def build_serve_rails(
                 top_k=route_top_k,
                 embedder=embedder,
                 schema_vectors=router_schema_vectors,
+                settings=settings,
             )
             picked: str | None = None
             if router_chat is not None and shortlisted:
                 picked = select_schema(corpus, question, shortlisted, chat=router_chat)
+                usage = getattr(router_chat, "last_usage_metadata", None)
+                if usage:
+                    events.add_token_usage(
+                        [{"source": "router", "usage_metadata": usage}]
+                    )
                 routed = (
                     frozenset([picked])
                     if picked
@@ -405,7 +449,7 @@ def build_serve_rails(
                 "total_schemas": len(_corpus_schemas),
                 "schema_pick": picked,
             }
-        retrieval = retrieve(retrieval_corpus, question, embedder=embedder)
+        retrieval = retrieve(retrieval_corpus, question, embedder=embedder, settings=settings)
         missing = detect_missing_join_path(
             corpus, graph_obj, set(retrieval.table_ids)
         )
@@ -414,7 +458,7 @@ def build_serve_rails(
                 "assemble", "refused", missing_edge=True, schemas=sorted(missing.schemas)
             )
             ans = missing_edge_refusal(base_provenance, missing)
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         try:
             licensing_join_ids = plan_joins(graph_obj, set(retrieval.table_ids)).join_ids
@@ -426,6 +470,9 @@ def build_serve_rails(
             retrieval,
             licensed_table_ids=licensed_ids,
             history=history,
+            db_name=settings.datasource.db,
+            always_note_global_max=settings.always_note_global_max,
+            always_note_char_max=settings.always_note_char_max,
         )
         events.rail(
             "assemble",
@@ -465,7 +512,7 @@ def build_serve_rails(
         )
         if hit is not None:
             events.rail("cache", "hit", metric_id=hit.provenance.get("metric_id"))
-            events.final(hit)
+            hit = events.final(hit)
             return {"answer": hit, "outcome": "finalize"}
         return {"outcome": "miss"}
 
@@ -679,14 +726,23 @@ def build_serve_rails(
                             "governance_ledger": ledger,
                         },
                     )
-                    events.final(ans)
+                    ans = events.final(ans)
                     return {"answer": ans, "outcome": "refuse"}
                 # Resume the paused inner agent with the user's answer.
                 agent_input = Command(resume=clarify_resume)
 
         try:
             final = _stream_agent(agent, agent_input, inner_cfg)
+            events.add_token_usage(final.get("token_usage"))
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
         except GovernanceHardStop as e:
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
             ledger = list(e.ledger)
             entry = e.entry
             ans = refusal(
@@ -700,7 +756,7 @@ def build_serve_rails(
                     "governance_ledger": ledger,
                 },
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         except GraphRecursionError as e:
             # Step budget exhausted without a final answer → fail closed (§6),
@@ -734,7 +790,24 @@ def build_serve_rails(
                 dialect=dialect,
                 default_schema=default_schema,
             )
-            events.final(ans)
+            ans = events.final(ans)
+            return {"answer": ans, "outcome": "refuse"}
+        except Exception as e:
+            # L4: model/call failure — drain failed-call stubs and still emit one
+            # portable record (metadata-only; no exception message text).
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
+            ans = refusal(
+                escalation=_ESCALATION_NO_COVERAGE,
+                provenance={
+                    **state["base_provenance"],
+                    "refused_by": "model_error",
+                    "error_type": type(e).__name__,
+                },
+            )
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         # Local provenance copy — never mutate the input state in place (a LangGraph
@@ -795,7 +868,7 @@ def build_serve_rails(
                     ans,
                     provenance={**ans.provenance, "governance_ledger": ledger},
                 )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         result = result_from_ledger(pass_entry)
@@ -821,7 +894,7 @@ def build_serve_rails(
                 dialect=dialect,
                 default_schema=default_schema,
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         generated = GeneratedSql(
@@ -847,7 +920,7 @@ def build_serve_rails(
             on_event=None,
             ledger=ledger,
         )
-        events.final(ans)
+        ans = events.final(ans)
         return {"answer": ans, "outcome": "finalize"}
 
     def narrate_node(state: ServeRailsState) -> dict:
@@ -861,8 +934,22 @@ def build_serve_rails(
         if answer is None:
             return {}
         narrated = narrate_answer(answer, state["question"], narrator)
+        # Only fold narrator tokens when the narrator actually ran. On refusals
+        # narrate_answer returns the same object without calling the model — do
+        # not read a stale last_usage_metadata from a prior success turn.
         if narrated is answer:
             return {}
+        chat = getattr(narrator, "_chat", None) or getattr(narrator, "chat", None)
+        usage = getattr(chat, "last_usage_metadata", None) if chat is not None else None
+        if usage:
+            narrated = amend_run_tokens(
+                narrated,
+                settings=settings,
+                extra_usage=[{"source": "narrator", "usage_metadata": usage}],
+                model=getattr(settings.models, "llm_model", None),
+            )
+            if chat is not None:
+                chat.last_usage_metadata = None
         return {"answer": narrated}
 
     builder = StateGraph(ServeRailsState)
@@ -899,6 +986,8 @@ def answer_question_agent(
     clarify_checkpointer: Any = None,
     clarify_thread: str | None = None,
     clarify_resume: Any = None,
+    run_id: str | None = None,
+    n_human: int = 1,
 ) -> "Answer | ClarificationPending":
     """Run one question through the agentic serve rails.
 
@@ -907,6 +996,7 @@ def answer_question_agent(
     only when ``clarify_checkpointer`` is passed; the eval path calls this without
     it and always gets an ``Answer``.
     """
+    _run_id = run_id or new_run_id()
     graph = build_serve_rails(
         corpus=corpus,
         gateway=gateway,
@@ -922,6 +1012,8 @@ def answer_question_agent(
         clarify_checkpointer=clarify_checkpointer,
         clarify_thread=clarify_thread,
         clarify_resume=clarify_resume,
+        run_id=_run_id,
+        n_human=n_human,
     )
     final = graph.invoke(
         {
@@ -934,8 +1026,20 @@ def answer_question_agent(
         return ClarificationPending(final.get("clarification") or {})
     answer = final.get("answer")
     if answer is None:
-        return refusal(
+        ans = refusal(
             escalation=_ESCALATION_NO_COVERAGE,
             provenance={"refused_by": "no_coverage", "session_id": session_id},
+        )
+        return finalize_and_log(
+            ans,
+            ctx=FinalizeCtx(
+                settings=settings,
+                run_id=_run_id,
+                thread_id=session_id,
+                n_human=n_human,
+                model=getattr(settings.models, "llm_model", None),
+                outcome="refuse",
+                question=question,
+            ),
         )
     return answer

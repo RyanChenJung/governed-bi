@@ -13,7 +13,9 @@ entry, single DB round-trip).
 from __future__ import annotations
 
 import operator
-from typing import TYPE_CHECKING, Annotated
+import time
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Annotated, Any
 
 
 def _coerce_ai_message(m: AIMessage) -> AIMessage:
@@ -34,12 +36,21 @@ def _coerce_ai_message(m: AIMessage) -> AIMessage:
             if not (isinstance(block, dict) and block.get("type") == "tool_use")
             or block.get("id") == kept_id
         ]
-    return AIMessage(
-        content=content,
-        tool_calls=m.tool_calls[:1],
-        id=getattr(m, "id", None),
-        additional_kwargs=getattr(m, "additional_kwargs", {}) or {},
-    )
+    kwargs: dict[str, Any] = {
+        "content": content,
+        "tool_calls": m.tool_calls[:1],
+        "id": getattr(m, "id", None),
+        "additional_kwargs": getattr(m, "additional_kwargs", {}) or {},
+    }
+    # Preserve usage/response metadata through coercion (ADR 0004 token capture
+    # reads usage_metadata off the post-coercion message in after_model).
+    usage = getattr(m, "usage_metadata", None)
+    if usage is not None:
+        kwargs["usage_metadata"] = usage
+    resp_meta = getattr(m, "response_metadata", None)
+    if resp_meta is not None:
+        kwargs["response_metadata"] = resp_meta
+    return AIMessage(**kwargs)
 
 
 def _supports_parallel_tool_calls(model: object) -> bool:
@@ -73,11 +84,20 @@ _HARD = {GuardrailLayer.policy_blacklist}
 _GOVERNED_TOOLS = frozenset({"run_query", "sample_rows"})
 
 
+def _ledger_stamp(t0: float) -> dict[str, Any]:
+    """``duration_ms`` + UTC ``ts`` for every ledger entry (ADR 0004 L1)."""
+    return {
+        "duration_ms": int((time.perf_counter() - t0) * 1000),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 class GovState(AgentState):
     """Agent subgraph state: chat messages plus governed channels."""
 
     licensed: Annotated[list, operator.add]  # table-asset ids licensed this turn
     ledger: Annotated[list, operator.add]  # one record per governed action
+    token_usage: Annotated[list, operator.add]  # per-model-call usage snapshots (L4)
 
 
 class GovernanceHardStop(Exception):
@@ -188,6 +208,8 @@ class GovernanceMiddleware(AgentMiddleware):
             if isinstance(a, TableAsset)
             and not getattr(getattr(a, "governance", None), "excluded", False)
         }
+        # L4 failed-call stubs when wrap_model_call raises before a response.
+        self.failed_model_calls: list[dict[str, Any]] = []
 
     def wrap_model_call(self, request, handler):
         # Gotcha G1: force sequential tool calls on every model turn. Prefer
@@ -196,14 +218,52 @@ class GovernanceMiddleware(AgentMiddleware):
         settings = dict(request.model_settings or {})
         model = request.model
         if hasattr(model, "bind") and _supports_parallel_tool_calls(model):
-            model = model.bind(parallel_tool_calls=False)
-            settings["parallel_tool_calls"] = False
-        response = handler(request.override(model=model, model_settings=settings))
+            try:
+                model = model.bind(parallel_tool_calls=False)
+                settings["parallel_tool_calls"] = False
+            except Exception:
+                pass
+        try:
+            response = handler(request.override(model=model, model_settings=settings))
+        except Exception as exc:
+            # Metadata-only stub (no exception message — may echo user/SQL content).
+            self.failed_model_calls.append(
+                {
+                    "source": "agent_core",
+                    "failed": True,
+                    "error_type": type(exc).__name__,
+                    "usage_metadata": {},
+                }
+            )
+            raise
         return self._coerce_single_tool_call(response)
+
+    def after_model(self, state, runtime):  # noqa: ARG002 — LangChain middleware hook
+        """Capture usage from the last AIMessage onto ``token_usage`` (SPIKE-1 / L4)."""
+        messages = state.get("messages") or []
+        for m in reversed(messages):
+            if not isinstance(m, AIMessage):
+                continue
+            usage = getattr(m, "usage_metadata", None)
+            if not usage:
+                return None
+            entry: dict[str, Any] = {
+                "source": "agent_core",
+                "usage_metadata": dict(usage) if hasattr(usage, "keys") else usage,
+            }
+            resp_meta = getattr(m, "response_metadata", None)
+            if resp_meta:
+                entry["response_metadata"] = dict(resp_meta)
+            return {"token_usage": [entry]}
+        return None
 
     @staticmethod
     def _coerce_single_tool_call(response):
-        """If the model emitted parallel tool_calls, keep only the first (G1)."""
+        """If the model emitted parallel tool_calls, keep only the first (G1).
+
+        Preserves ``usage_metadata`` and ``response_metadata`` through rebuild
+        (SPIKE-1 / L4) so token capture survives coercion.
+        """
         from langchain.agents.middleware.types import ModelResponse
 
         if isinstance(response, ModelResponse):
@@ -239,6 +299,7 @@ class GovernanceMiddleware(AgentMiddleware):
         if name not in _GOVERNED_TOOLS:
             return handler(request)
 
+        t0 = time.perf_counter()
         tcid = request.tool_call["id"]
         args = request.tool_call.get("args") or {}
         licensed_ids = list(request.state.get("licensed") or [])
@@ -256,6 +317,7 @@ class GovernanceMiddleware(AgentMiddleware):
                                 "verdict": "deny",
                                 "reason": err,
                                 "table_id": args.get("table_id"),
+                                **_ledger_stamp(t0),
                             }
                         ],
                     }
@@ -279,7 +341,12 @@ class GovernanceMiddleware(AgentMiddleware):
                             ToolMessage(content="attempt cap reached", tool_call_id=tcid)
                         ],
                         "ledger": [
-                            {"action": "run_query", "verdict": "cap", "sql": sql}
+                            {
+                                "action": "run_query",
+                                "verdict": "cap",
+                                "sql": sql,
+                                **_ledger_stamp(t0),
+                            }
                         ],
                     }
                 )
@@ -303,6 +370,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 "sql": sql,
                 "allowed": sorted(allowed_tables),
                 "licensed_ids": sorted(licensed_ids),
+                **_ledger_stamp(t0),
             }
             if verdict.failed_layer in _HARD:
                 raise GovernanceHardStop(entry, ledger=prior_ledger)
@@ -335,6 +403,7 @@ class GovernanceMiddleware(AgentMiddleware):
                     "sql": sql,
                     "allowed": sorted(allowed_tables),
                     "licensed_ids": sorted(licensed_ids),
+                    **_ledger_stamp(t0),
                 }
                 # Hard stop, mirroring the retrieval-time missing-edge refusal: an
                 # undeclared cross-schema join is never executed nor graded-delivered
@@ -352,6 +421,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 "reason": str(err),
                 "allowed": sorted(allowed_tables),
                 "licensed_ids": sorted(licensed_ids),
+                **_ledger_stamp(t0),
             }
             return Command(
                 update={
@@ -369,6 +439,7 @@ class GovernanceMiddleware(AgentMiddleware):
             "allowed": sorted(allowed_tables),
             "licensed_ids": sorted(licensed_ids),
             "result": serialize_result(result),
+            **_ledger_stamp(t0),
         }
         return Command(
             update={

@@ -81,6 +81,7 @@ class LangChainChatClient:
 
     def __init__(self, model: Any) -> None:
         self.model = model
+        self.last_usage_metadata: dict | None = None  # set by complete() for L4 capture
 
     @classmethod
     def from_config(cls, models: "ModelConfig") -> "LangChainChatClient":
@@ -126,6 +127,8 @@ class LangChainChatClient:
             callbacks = tracing_callbacks()
             config = {"callbacks": callbacks} if callbacks else None
             message = self.model.invoke(messages, config=config)
+        usage = getattr(message, "usage_metadata", None)
+        self.last_usage_metadata = dict(usage) if usage else None
         return _message_text(message)
 
 
