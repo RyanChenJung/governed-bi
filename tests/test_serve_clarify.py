@@ -150,6 +150,88 @@ def test_decline_fails_closed(tmp_path):
     assert answer["provenance"]["refused_by"] == "clarification_declined"
 
 
+# ── Round 7: defer ("I don't know / answer later") — distinct from decline ── #
+
+_DEFER_TURNS = [
+    ai_tool_turn(
+        "ask_user",
+        {"question": "Revenue gross or net?", "why": "two revenue definitions exist"},
+        "d1",
+    ),
+    ai_tool_turn("inspect_schema", {"table_id": "tbl_beer_factory_transaction"}, "d2"),
+    ai_tool_turn(
+        "run_query",
+        {"sql": 'SELECT SUM("PurchasePrice") AS total_revenue FROM "transaction"'},
+        "d3",
+    ),
+    AIMessage(
+        content=(
+            "Total revenue is shown below, assuming gross revenue — this "
+            "assumption is unconfirmed and pending admin review."
+        )
+    ),
+]
+
+
+def test_defer_lets_agent_continue_to_governed_answer(tmp_path):
+    """Defer is NOT decline: the turn does not fail closed. The inner agent
+    resumes on the CLARIFY_DEFERRED ToolMessage, keeps reasoning, and completes
+    with a governed Answer rather than a refusal."""
+    stack = _clarify_stack(_DEFER_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    cfg = _cfg("defer1")
+
+    first = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, cfg)
+    req = first["__interrupt__"][0].value
+
+    resumed = graph.invoke(
+        Command(resume={"clarification_id": req["clarification_id"], "defer": True}),
+        cfg,
+    )
+
+    answer = resumed["answer"]
+    # The turn completed with an answer, not a refusal.
+    assert answer["tier"] != "refused"
+    assert "SUM" in (answer["sql"] or "").upper()
+    # The turn actually finished (outer graph no longer paused).
+    assert not graph.get_state(cfg).next
+    # The final answer text flags the unconfirmed assumption (prose surface).
+    assert "unconfirmed" in answer["text"].lower()
+    # Provenance distinguishes a deferred resolution from an answered one
+    # (contract §7 extension) — structural, not just prose.
+    clar = answer["provenance"]["clarifications"]
+    assert clar and clar[0]["answered_by"] == "deferred"
+    assert clar[0].get("deferred") is True
+    # And the reliability stamp itself drops to heuristic, never grounded, for
+    # a turn that proceeded on an unconfirmed assumption.
+    assert answer["semantic_assurance"] == "heuristic"
+
+
+def test_defer_leaves_ledger_record_open(tmp_path):
+    """The curator ledger record for a deferred question stays ``open`` — like a
+    decline, unlike an answer — since nothing was actually resolved live."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_DEFER_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    cfg = _cfg("defer2")
+
+    first = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, cfg)
+    req = first["__interrupt__"][0].value
+
+    graph.invoke(
+        Command(resume={"clarification_id": req["clarification_id"], "defer": True}),
+        cfg,
+    )
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.id == req["clarification_id"]
+    assert rec.status.value == "open"
+    assert rec.answer is None
+
+
 # Two clarifications in one turn, then answer.
 _MULTI_TURNS = [
     ai_tool_turn(

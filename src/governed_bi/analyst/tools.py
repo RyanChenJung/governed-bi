@@ -24,6 +24,17 @@ from .clarify import clarification_request, parse_response
 # is a defensive fallback only.
 CLARIFY_DECLINED = "USER_DECLINED: the user did not answer; do not guess."
 
+# Sentinel the agent sees when the user DEFERS a clarification ("I don't know /
+# answer later"), distinct from a decline: the rails let the agent keep running
+# on this same ToolMessage (contract §4 extension) instead of failing the turn,
+# so — unlike CLARIFY_DECLINED — this string is the actual instruction the model
+# acts on, not a defensive fallback.
+CLARIFY_DEFERRED = (
+    "USER_DEFERRED: no answer available yet — proceed using your own best "
+    "judgment for this specific point, and explicitly flag in your final answer "
+    "that this particular assumption is unconfirmed and pending admin review."
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -80,12 +91,14 @@ def _record_live_clarification_answer(
     *,
     clarification_id: str,
     declined: bool,
+    deferred: bool = False,
     answer: str,
 ) -> None:
     """After ``interrupt`` returns, sync the ledger record with what actually
-    happened live: answered records get the answer; a decline leaves the
-    record ``open`` (still homework — nothing was actually resolved)."""
-    if corpus_root is None or declined:
+    happened live: answered records get the answer; a decline or a defer both
+    leave the record ``open`` (still homework — nothing was actually resolved,
+    an admin can answer it later)."""
+    if corpus_root is None or declined or deferred:
         return
     from ..curator.clarifications import (
         ClarificationRecordStatus,
@@ -410,7 +423,12 @@ def make_tools(
         Use ONLY when the question is genuinely ambiguous and the governed context
         cannot resolve it (e.g. two competing definitions of a term) — never for
         things you can answer by inspecting the schema or corpus. State plainly in
-        ``why`` what is ambiguous. Returns the user's answer; continue with it.
+        ``why`` what is ambiguous. Returns the user's answer; continue with it. If
+        the user instead defers ("I don't know / answer later"), you get an
+        instruction to proceed on your own best judgment for this point and flag
+        that specific assumption as unconfirmed in your final answer — keep going,
+        do not stop the turn (a decline, unlike a defer, does stop the turn before
+        you run again).
         """
         request = clarification_request(question, why)
         _log_live_clarification(
@@ -425,10 +443,13 @@ def make_tools(
             corpus_root,
             clarification_id=request["clarification_id"],
             declined=parsed["declined"],
+            deferred=parsed["deferred"],
             answer=parsed["answer"],
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED
+        if parsed["deferred"]:
+            return CLARIFY_DEFERRED
         return parsed["answer"]
 
     @tool

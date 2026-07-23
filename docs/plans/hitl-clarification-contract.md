@@ -80,13 +80,28 @@ Verified against `langgraph>=1.0` (server) and `@langchain/langgraph-sdk@^1.9.25
 
 // Declined / cancelled:
 { "clarification_id": "clar_ab12", "declined": true }
+
+// Deferred ("I don't know / answer later") — Round 7:
+{ "clarification_id": "clar_ab12", "defer": true }
 ```
 
-- Exactly one of `answer` / `choice_id` / `declined:true` is set.
+- Exactly one of `answer` / `choice_id` / `declined:true` / `defer:true` is set.
 - **Decline semantics (D3):** the agent does **not** guess. It fails closed —
   returns a refusal (or a best-effort answer stamped with lowered
   `semantic_assurance`, per the §6 grade policy). The safe default in v1 is
   **refuse** with reason `clarification_declined`.
+- **Defer semantics (Round 7, distinct from decline):** the user doesn't know the
+  answer right now, but wants the turn to finish anyway rather than fail. The
+  agent **proceeds** on its own best judgment for that specific point and
+  **must** flag the assumption as unconfirmed in its final answer — the turn
+  does **not** fail closed. The question stays logged in the curator's
+  clarifications ledger (§10/§12, `source="live_chat"`) with status `open` (same
+  as a decline) so an admin can answer it later; the difference from decline is
+  purely about whether *this turn* blocks or continues. Provenance's
+  `clarifications` entry (§7) for a deferred question carries `deferred: true`
+  and `answered_by: "deferred"` instead of `"user"`, and the reliability stamp
+  (`semantic_assurance`) drops to `heuristic` even on an otherwise clean run, so
+  the assumption is queryable structurally, not just in prose.
 - The server validates the `clarification_id` matches the pending question;
   mismatch ⇒ ignore + re-emit the interrupt (defensive; should not happen with a
   single pending interrupt).
@@ -129,13 +144,18 @@ audit shows what was asked and answered:
 ```jsonc
 "provenance": {
   "clarifications": [
-    { "clarification_id": "clar_ab12", "question": "…", "answer": "logged in last 30 days", "answered_by": "user" }
+    { "clarification_id": "clar_ab12", "question": "…", "answer": "logged in last 30 days", "answered_by": "user" },
+    { "clarification_id": "clar_cd34", "question": "…", "answer": "USER_DEFERRED: …", "answered_by": "deferred", "deferred": true }
   ]
 }
 ```
 
 `answered_by:"user"` distinguishes a served HITL answer from the curator's
 Simulated-SME answers, so the two never get conflated in the ledger.
+`answered_by:"deferred"` (+ `deferred: true`, Round 7) marks a point the agent
+answered on its own unconfirmed judgment rather than the user's — the same
+provenance list, so both are structurally queryable off one field, not a second
+vocabulary.
 
 ## 8. Capabilities & feature-gating
 
@@ -163,7 +183,8 @@ export interface ClarificationRequest {
 export type ClarificationResponse =
   | { clarification_id: string; answer: string }
   | { clarification_id: string; choice_id: string }
-  | { clarification_id: string; declined: true };
+  | { clarification_id: string; declined: true }
+  | { clarification_id: string; defer: true }; // Round 7: "I don't know / answer later" — agent proceeds, does not fail closed
 
 // Hook: const stream = useStream<ChatStreamState, ClarificationRequest>(…)
 // Render when stream.interrupt != null; resolve via stream.respond(response).
@@ -227,6 +248,20 @@ The engine side is built and tested offline; the frontend is the remaining work.
   Single- and sequential multi-clarification per turn are both tested
   (`tests/test_serve_clarify.py`); parallel/batched clarification is out of scope
   (§6).
+- **Defer (Round 7, added on top of the above):** `analyst/clarify.py`'s
+  `parse_response` now returns a third, mutually-exclusive `deferred` outcome
+  alongside `declined`/answered. `ask_user` (`analyst/tools.py`) returns the
+  `CLARIFY_DEFERRED` ToolMessage instead of `CLARIFY_DECLINED`, and the outer
+  rails (`analyst/agent.py`'s `agent_core_node`) let a deferred resume fall
+  through to the same `Command(resume=...)` path as an answer — only `declined`
+  hard-stops. `_extract_clarifications` tags a deferred resolution
+  (`deferred: true`, `answered_by: "deferred"`) for provenance (§7); the ledger
+  record from Round 6 stays `open` for a defer, same as a decline. The
+  reliability stamp gains `UncertaintySignals.deferred_clarification`
+  (`analyst/answer.py`), so a deferred-and-completed turn is `heuristic`, never
+  `grounded` — and is therefore never cache-admitted. `SYSTEM_PROMPT`
+  (`analyst/agent.py`) instructs the model to flag the specific unconfirmed
+  assumption in its final answer text. Tested in `tests/test_serve_clarify.py`.
 
 ### LangGraph HITL best-practice compliance
 

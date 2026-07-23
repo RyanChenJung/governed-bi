@@ -60,7 +60,7 @@ from .middleware import (
 from .clarify import new_clarification_id, parse_response
 from .routing import bind_terms, route_intent
 from .sqlgen import GeneratedSql, _tables_used
-from .tools import make_tools
+from .tools import CLARIFY_DEFERRED, make_tools
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -90,6 +90,11 @@ and `inspect_schema` any table **not** already listed before querying it (that \
 licenses it). Use `sample_rows` if you need to see real values. If `run_query` \
 returns BLOCKED or an error, read it, fix the SQL, and retry (max 3). Never guess \
 an identifier. Call tools **one at a time**.
+
+If `ask_user` tells you no answer is available yet and to proceed on your own \
+judgment, do so for that specific point only — and in your final answer, \
+explicitly call out that assumption as unconfirmed and pending admin review \
+(e.g. "assuming X, which is unconfirmed — ...").
 """
 
 _ESCALATION_CLARIFY_DECLINED = (
@@ -111,9 +116,17 @@ class ClarificationPending:
 
 
 def _extract_clarifications(messages: list | None) -> list[dict]:
-    """Recover the turn's answered clarifications from the inner agent's final
-    messages, pairing each ``ask_user`` call with its answer ToolMessage. Robust to
-    multiple clarifications in one turn (provenance, contract §7)."""
+    """Recover the turn's resolved clarifications from the inner agent's final
+    messages, pairing each ``ask_user`` call with its resulting ToolMessage.
+    Robust to multiple clarifications in one turn (provenance, contract §7).
+
+    A resolution is either an **answer** (``answered_by: "user"``) or a
+    **defer** (``deferred: True``, ``answered_by: "deferred"`` — the
+    ``ask_user`` tool returned :data:`.tools.CLARIFY_DEFERRED`, the agent
+    proceeded on its own judgment for that point). A decline never reaches
+    here — the outer rails hard-stop before the agent runs again, so no
+    ToolMessage for it exists in ``messages``.
+    """
     asks: dict[str, dict] = {}
     for m in messages or []:
         if isinstance(m, AIMessage):
@@ -124,14 +137,17 @@ def _extract_clarifications(messages: list | None) -> list[dict]:
     for m in messages or []:
         if isinstance(m, ToolMessage) and getattr(m, "tool_call_id", None) in asks:
             question = asks[m.tool_call_id].get("question", "")
-            out.append(
-                {
-                    "clarification_id": new_clarification_id(question),
-                    "question": question,
-                    "answer": str(m.content),
-                    "answered_by": "user",
-                }
-            )
+            content = str(m.content)
+            deferred = content == CLARIFY_DEFERRED
+            entry = {
+                "clarification_id": new_clarification_id(question),
+                "question": question,
+                "answer": content,
+                "answered_by": "deferred" if deferred else "user",
+            }
+            if deferred:
+                entry["deferred"] = True
+            out.append(entry)
     return out
 
 
@@ -724,6 +740,11 @@ def build_serve_rails(
                     return {"outcome": "clarify", "clarification": request}
                 parsed = parse_response(clarify_resume)
                 if parsed["declined"]:
+                    # Decline (unchanged, Round 6): hard-stop here — the inner
+                    # agent never runs again this turn. A *defer* (parsed["deferred"])
+                    # is NOT declined, so it falls through to the resume below
+                    # exactly like an answer: the inner agent's ask_user sees
+                    # CLARIFY_DEFERRED and keeps reasoning to completion (Round 7).
                     ledger = list((snap.values or {}).get("ledger") or [])
                     ans = refusal(
                         escalation=_ESCALATION_CLARIFY_DECLINED,
@@ -823,17 +844,22 @@ def build_serve_rails(
         # bite once a checkpointer or a parallel branch is added). Finalizers below
         # read this local.
         base_provenance = state["base_provenance"]
+        deferred_this_turn = False
         if clarify_on:
             # The inner agent may have paused on a fresh ask_user this pass; bubble
             # it up so the chat-graph node surfaces it as a client interrupt.
             snap2 = agent.get_state(inner_cfg)
             if snap2.next and getattr(snap2, "interrupts", None):
                 return {"outcome": "clarify", "clarification": snap2.interrupts[0].value}
-            # Otherwise fold the turn's answered clarifications into provenance (§7),
+            # Otherwise fold the turn's resolved clarifications into provenance (§7),
             # so both success and refusal finalizers below carry them.
             answered = _extract_clarifications(final.get("messages"))
             if answered:
                 base_provenance = {**base_provenance, "clarifications": answered}
+                # A deferred clarification means the turn proceeded on an
+                # unconfirmed assumption — lowers the reliability stamp below
+                # (structural flag, not just prose; Round 7).
+                deferred_this_turn = any(c.get("deferred") for c in answered)
 
         ledger = list(final.get("ledger") or [])
         sql, tables_used, pass_entry = extract_final_sql(
@@ -927,6 +953,7 @@ def build_serve_rails(
             narrator=None,  # narration deferred to narrate_node
             on_event=None,
             ledger=ledger,
+            deferred_clarification=deferred_this_turn,
         )
         ans = events.final(ans)
         return {"answer": ans, "outcome": "finalize"}

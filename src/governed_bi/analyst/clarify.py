@@ -54,19 +54,37 @@ def parse_response(response: Any) -> dict[str, Any]:
     """Normalize a ``ClarificationResponse`` (contract §4) coming back from
     ``interrupt``/``stream.respond``.
 
-    Returns ``{"declined": bool, "answer": str, "clarification_id": str|None}``.
+    Returns ``{"declined": bool, "deferred": bool, "answer": str,
+    "clarification_id": str|None}``. The three outcomes are mutually exclusive:
+
+    - **answered** — ``declined=False, deferred=False``, ``answer`` set.
+    - **declined** — ``declined=True`` — the user gave up; the caller fails the
+      turn closed (contract §4 D3, unchanged).
+    - **deferred** — ``deferred=True`` — the user doesn't know / will answer
+      later; the caller should let the agent proceed on its own best judgment
+      for this point, flagging the assumption as unconfirmed, rather than
+      failing the turn (§4 extension, this round).
+
     Tolerant: a bare string (some clients call ``respond("text")``) is treated as
-    a freeform answer; an empty answer is treated as a decline.
+    a freeform answer; an empty answer is treated as a decline (there is no
+    string spelling of defer — clients that want defer must send the dict form).
     """
     if isinstance(response, str):
         text = response.strip()
-        return {"declined": not text, "answer": text, "clarification_id": None}
+        return {"declined": not text, "deferred": False, "answer": text, "clarification_id": None}
     if not isinstance(response, dict):
-        return {"declined": True, "answer": "", "clarification_id": None}
+        return {"declined": True, "deferred": False, "answer": "", "clarification_id": None}
     cid = response.get("clarification_id")
     if response.get("declined") is True:
-        return {"declined": True, "answer": "", "clarification_id": cid}
+        return {"declined": True, "deferred": False, "answer": "", "clarification_id": cid}
+    if response.get("defer") is True:
+        return {"declined": False, "deferred": True, "answer": "", "clarification_id": cid}
     if "choice_id" in response and response["choice_id"]:
-        return {"declined": False, "answer": str(response["choice_id"]), "clarification_id": cid}
+        return {
+            "declined": False,
+            "deferred": False,
+            "answer": str(response["choice_id"]),
+            "clarification_id": cid,
+        }
     answer = str(response.get("answer") or "").strip()
-    return {"declined": not answer, "answer": answer, "clarification_id": cid}
+    return {"declined": not answer, "deferred": False, "answer": answer, "clarification_id": cid}

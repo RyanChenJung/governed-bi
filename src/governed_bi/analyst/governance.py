@@ -241,6 +241,20 @@ def _answer_text(
         return _render(result, None)
 
 
+def _deferred_clarification_prefix() -> str:
+    """The deferred-clarification caveat banner (Round 7, HITL contract §4
+    extension). Shared by the deterministic finalizer text and the LLM
+    ``narrate`` node (mirrors :func:`_unverified_prefix`'s pattern) so a
+    deferred-and-completed answer always carries this caveat verbatim in its
+    text, regardless of whether a narrator is configured — the flag is never
+    left to the model's own phrasing alone."""
+    return (
+        "Note: this answer proceeded on an unconfirmed assumption — a "
+        "clarifying question was deferred rather than answered, and is now "
+        "pending admin review.\n\n"
+    )
+
+
 def _unverified_prefix(provenance: dict) -> str:
     """The graded-delivery caveat banner (pipeline-design §6).
 
@@ -276,6 +290,8 @@ def narrate_answer(
         return answer
     if answer.semantic_assurance is SemanticAssurance.unverified:
         body = _unverified_prefix(answer.provenance or {}) + body
+    if (answer.provenance or {}).get("deferred_clarification"):
+        body = _deferred_clarification_prefix() + body
     return replace(answer, text=body)
 
 
@@ -594,6 +610,7 @@ def _finalize_success(
     cache, narrator: "AnswerNarrator | None" = None, on_event: "Callable[[dict], None] | None" = None,
     coverage_best_effort: bool = False,
     ledger: list | None = None,
+    deferred_clarification: bool = False,
 ) -> "Answer":
     """Stamp + assemble a successful answer, and write back a clean one to the cache.
 
@@ -602,6 +619,11 @@ def _finalize_success(
     here in ``analyst.governance`` (rather than inline in ``analyst.agent``) so the
     stamping logic stays centralized and testable on its own.
     ``ledger`` (optional) attaches the agent governance ledger to provenance (Inv #10).
+    ``deferred_clarification`` (Round 7): the agent proceeded past a deferred
+    ``ask_user`` question this turn — lowers the stamp to ``heuristic`` (this
+    answer rests on an unconfirmed assumption, not a clean run) even when no
+    other uncertainty signal fired. Cache admission (below) then correctly skips
+    it, since only a ``grounded`` answer is ever cached.
     """
     try:
         stamp_plan = plan_joins(graph, set(generated.tables_used))
@@ -614,6 +636,7 @@ def _finalize_success(
         suspect_in_scope=_suspect_in_scope(generated.sql, allowlist.suspect, dialect),
         fenced_raw_fallback=coverage_best_effort,
         repaired=attempts > 1 or coverage_best_effort,
+        deferred_clarification=deferred_clarification,
     )
     provenance = {
         **base_provenance,
@@ -625,12 +648,15 @@ def _finalize_success(
         "truncated": result.truncated,
         "attempts": attempts,
         "coverage_best_effort": coverage_best_effort,
+        "deferred_clarification": deferred_clarification,
     }
     if ledger is not None:
         provenance["governance_ledger"] = list(ledger)
     table = _result_table(result)
     _emit(on_event, "compose")
     text = _answer_text(question, generated.sql, result, table, narrator)
+    if deferred_clarification:
+        text = _deferred_clarification_prefix() + text
     answer = assemble(
         text=text, sql=generated.sql, signals=signals, provenance=provenance, result=table
     )
