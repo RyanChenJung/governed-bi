@@ -157,6 +157,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                     clarify_thread=clarify_thread,
                     clarify_resume=resume,
                     n_human=n_human,
+                    corpus_root=stack.corpus_root,
                 )
             finally:
                 connector.close()

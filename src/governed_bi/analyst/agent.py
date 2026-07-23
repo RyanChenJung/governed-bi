@@ -64,6 +64,7 @@ from .tools import make_tools
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from ..config import Settings
     from ..corpus import Corpus
@@ -176,12 +177,16 @@ def build_agent_core(
     system_prompt: str = SYSTEM_PROMPT,
     enable_clarify: bool = False,
     checkpointer: Any = None,
+    corpus_root: "Path | None" = None,
 ):
     """Assemble ``create_agent`` with governed tools + middleware.
 
     ``enable_clarify`` adds the ``ask_user`` HITL tool and requires ``checkpointer``
     (``interrupt`` needs one to pause/resume). Both default off, so the
     eval/offline path builds the identical agent it always has.
+
+    ``corpus_root``, when given, lets ``ask_user`` durably log live questions to
+    the curator clarifications ledger (see ``make_tools``); ``None`` skips that.
     """
     tools = make_tools(
         corpus,
@@ -189,6 +194,7 @@ def build_agent_core(
         identity,
         embedder=embedder,
         enable_clarify=enable_clarify,
+        corpus_root=corpus_root,
     )
     mw = GovernanceMiddleware(
         corpus,
@@ -261,6 +267,7 @@ def build_serve_rails(
     clarify_resume: Any = None,
     run_id: str | None = None,
     n_human: int = 1,
+    corpus_root: "Path | None" = None,
 ):
     """Compile the outer deterministic StateGraph wrapping the agent core.
 
@@ -689,6 +696,7 @@ def build_serve_rails(
             system_prompt=system_prompt,
             enable_clarify=clarify_on,
             checkpointer=clarify_checkpointer,
+            corpus_root=corpus_root,
         )
 
         # One tracing handler per turn: it is attached at the outer graph.invoke
@@ -988,6 +996,7 @@ def answer_question_agent(
     clarify_resume: Any = None,
     run_id: str | None = None,
     n_human: int = 1,
+    corpus_root: "Path | None" = None,
 ) -> "Answer | ClarificationPending":
     """Run one question through the agentic serve rails.
 
@@ -995,6 +1004,9 @@ def answer_question_agent(
     inner agent paused on ``ask_user`` (HITL, contract §2). Clarification is active
     only when ``clarify_checkpointer`` is passed; the eval path calls this without
     it and always gets an ``Answer``.
+
+    ``corpus_root``, when given, is threaded to ``ask_user`` so it durably logs
+    every live question (and its answer) to the curator clarifications ledger.
     """
     _run_id = run_id or new_run_id()
     graph = build_serve_rails(
@@ -1014,6 +1026,7 @@ def answer_question_agent(
         clarify_resume=clarify_resume,
         run_id=_run_id,
         n_human=n_human,
+        corpus_root=corpus_root,
     )
     final = graph.invoke(
         {

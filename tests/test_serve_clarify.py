@@ -33,9 +33,16 @@ BIRD_DB = Path(__file__).resolve().parents[1] / "data" / "bird" / "beer_factory.
 REVENUE_Q = "What is the total revenue?"
 
 
-def _clarify_stack(turns: list) -> ServeStack:
+def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     """A live-ish stack: scripted model + an in-memory clarify checkpointer, so
-    ask_user's interrupt can pause/resume (as build_stack wires for real)."""
+    ask_user's interrupt can pause/resume (as build_stack wires for real).
+
+    ``corpus_root`` must be an isolated ``tmp_path`` (never the read-only
+    ``CORPUS_ROOT`` fixture tree): ``ask_user`` now durably logs live questions
+    to ``<corpus_root>/clarifications.jsonl`` (this round's feature), and every
+    test here goes through the real production wiring (``build_chat_graph`` ->
+    ``answer_question_agent``) that performs that write.
+    """
     if not BIRD_DB.exists():
         pytest.skip("vendored beer_factory.sqlite not present")
     corpus_full = load_corpus(CORPUS_ROOT, schema="beer_factory")
@@ -53,6 +60,7 @@ def _clarify_stack(turns: list) -> ServeStack:
         chat_model=FakeToolModel(responses=turns),
         can_clarify=True,
         clarify_checkpointer=InMemorySaver(),
+        corpus_root=corpus_root,
     )
 
 
@@ -77,8 +85,8 @@ _ANSWER_TURNS = [
 ]
 
 
-def test_ask_user_surfaces_clarification_request_as_interrupt():
-    stack = _clarify_stack(_ANSWER_TURNS)
+def test_ask_user_surfaces_clarification_request_as_interrupt(tmp_path):
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
     graph = build_chat_graph(stack, checkpointer=InMemorySaver())
 
     result = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("c1"))
@@ -93,8 +101,8 @@ def test_ask_user_surfaces_clarification_request_as_interrupt():
     assert req["tier"] == "audit"
 
 
-def test_resume_continues_to_governed_answer_with_provenance():
-    stack = _clarify_stack(_ANSWER_TURNS)
+def test_resume_continues_to_governed_answer_with_provenance(tmp_path):
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
     graph = build_chat_graph(stack, checkpointer=InMemorySaver())
     cfg = _cfg("c2")
 
@@ -123,8 +131,8 @@ def test_resume_continues_to_governed_answer_with_provenance():
     assert len(runs) == 1, f"run_query should execute once across resume, got {len(runs)}"
 
 
-def test_decline_fails_closed():
-    stack = _clarify_stack(_ANSWER_TURNS)
+def test_decline_fails_closed(tmp_path):
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
     graph = build_chat_graph(stack, checkpointer=InMemorySaver())
     cfg = _cfg("c3")
 
@@ -160,10 +168,10 @@ _MULTI_TURNS = [
 ]
 
 
-def test_sequential_multi_clarification():
+def test_sequential_multi_clarification(tmp_path):
     """Two ask_user calls in one turn: each pauses, each resumes, then the turn
     finishes — and both land in provenance while run_query stays idempotent."""
-    stack = _clarify_stack(_MULTI_TURNS)
+    stack = _clarify_stack(_MULTI_TURNS, tmp_path)
     graph = build_chat_graph(stack, checkpointer=InMemorySaver())
     cfg = _cfg("multi")
 
@@ -196,7 +204,7 @@ def test_sequential_multi_clarification():
     assert len([e for e in ledger if e.get("action") == "run_query"]) == 1
 
 
-def test_no_ask_user_tool_when_clarify_disabled():
+def test_no_ask_user_tool_when_clarify_disabled(tmp_path):
     """Parity: with no clarify checkpointer (the eval/offline path), the agent has
     no ask_user tool and the turn never interrupts."""
     turns = [
@@ -209,10 +217,114 @@ def test_no_ask_user_tool_when_clarify_disabled():
         AIMessage(content="done"),
     ]
     stack = replace(
-        _clarify_stack(turns), can_clarify=False, clarify_checkpointer=None
+        _clarify_stack(turns, tmp_path), can_clarify=False, clarify_checkpointer=None
     )
     graph = build_chat_graph(stack)  # no outer checkpointer, like today
     result = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("b"))
 
     assert "__interrupt__" not in result
     assert result["answer"]["tier"] == "governed"
+
+
+# ── Round 6: every live ask_user call durably logs to the curator ledger ── #
+
+
+def test_ask_user_logs_open_live_chat_record_before_answer(tmp_path):
+    """A live ask_user call writes a ``source="live_chat"`` ledger record —
+    before it is ever answered — so the question survives even if the
+    conversation ends mid-turn."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+
+    result = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("log1"))
+    req = result["__interrupt__"][0].value
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.id == req["clarification_id"]
+    assert rec.source == "live_chat"
+    assert rec.status.value == "open"
+    assert rec.question.startswith("Revenue gross or net?")
+    assert rec.answer is None
+
+
+def test_ask_user_answer_updates_same_record_not_a_duplicate(tmp_path):
+    """After the human answers live, the SAME ledger record is updated
+    (status=answered, answer/answered_by set) — never duplicated."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    cfg = _cfg("log2")
+
+    first = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, cfg)
+    req = first["__interrupt__"][0].value
+
+    graph.invoke(
+        Command(resume={"clarification_id": req["clarification_id"], "answer": "gross"}),
+        cfg,
+    )
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert len(records) == 1, "the answer must update the existing record, not add a second one"
+    rec = records[0]
+    assert rec.id == req["clarification_id"]
+    assert rec.source == "live_chat"
+    assert rec.status.value == "answered"
+    assert rec.answer == "gross"
+    assert rec.answered_by == "live_chat_user"
+
+
+def test_ask_user_decline_leaves_record_open(tmp_path):
+    """A decline does not fabricate an answer: the ledger record stays open —
+    still homework for the admin — rather than being marked answered."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_ANSWER_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    cfg = _cfg("log3")
+
+    first = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, cfg)
+    req = first["__interrupt__"][0].value
+
+    graph.invoke(
+        Command(resume={"clarification_id": req["clarification_id"], "declined": True}),
+        cfg,
+    )
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.status.value == "open"
+    assert rec.answer is None
+
+
+def test_curator_records_default_source_and_round_trip(tmp_path):
+    """Backward compat: a pre-existing (curator-authored) record with no
+    ``source`` on disk defaults to ``"curator"`` and round-trips unchanged."""
+    from governed_bi.curator.clarifications import (
+        ClarificationRecord,
+        clarifications_path,
+        load_clarifications,
+        write_clarifications,
+    )
+
+    path = clarifications_path(tmp_path)
+    path.write_text(
+        '{"id": "q001", "scope": "table:orders", "question": "What is `orders`?"}\n',
+        encoding="utf-8",
+    )
+    records = load_clarifications(path)
+    assert len(records) == 1
+    assert records[0].source == "curator"
+
+    # A curator record built directly (no source kwarg) also defaults correctly
+    # and survives a write/reload round trip untouched.
+    rec = ClarificationRecord(id="q002", scope="table:customers", question="What is `customers`?")
+    assert rec.source == "curator"
+    write_clarifications(path, [*records, rec])
+    reloaded = load_clarifications(path)
+    assert [r.source for r in reloaded] == ["curator", "curator"]

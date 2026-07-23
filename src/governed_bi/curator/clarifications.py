@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Protocol, Sequence, runtime_checkable
+from typing import Iterable, Literal, Protocol, Sequence, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -35,6 +35,11 @@ class ClarificationRecord(BaseModel):
     answer_choice_id: str | None = None
     answered_by: str | None = None
     converted_to_corpus: bool = False
+    # Where the record originated: the curator pipeline (offline SME hand-off,
+    # the pre-existing default) or a live serve-time ``ask_user`` call logged
+    # for later admin follow-up. Defaults to "curator" so every pre-existing
+    # record/test round-trips unchanged.
+    source: Literal["curator", "live_chat"] = "curator"
 
 
 CLARIFICATIONS_FILENAME = "clarifications.jsonl"

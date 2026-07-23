@@ -25,9 +25,89 @@ from .clarify import clarification_request, parse_response
 CLARIFY_DECLINED = "USER_DECLINED: the user did not answer; do not guess."
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ..corpus import Corpus
     from ..gateway import Gateway, Identity
     from ..llm import Embedder
+
+
+def _log_live_clarification(
+    corpus_root: "Path | None",
+    *,
+    clarification_id: str,
+    question: str,
+    why: str,
+) -> None:
+    """Durably log a live ``ask_user`` question to the curator ledger, before
+    ``interrupt`` pauses the turn — so the question survives even if nobody
+    answers it live (it then shows up in the admin's Clarifications tab as
+    homework). No-op when no ``corpus_root`` is threaded through (eval/offline
+    callers, and any caller that predates this feature).
+
+    Idempotent on ``clarification_id`` (deterministic hash of the question):
+    ``interrupt`` re-runs this function from the top on every resume, so a
+    record already logged for this id is left alone rather than duplicated.
+    """
+    if corpus_root is None:
+        return
+    from ..curator.clarifications import (
+        ClarificationRecord,
+        clarifications_path,
+        load_clarifications,
+        write_clarifications,
+    )
+
+    path = clarifications_path(corpus_root)
+    records = load_clarifications(path)
+    if any(rec.id == clarification_id for rec in records):
+        return
+    records.append(
+        ClarificationRecord(
+            id=clarification_id,
+            scope=f"live_chat:{clarification_id}",
+            question=f"{question} (why: {why})" if why else question,
+            source="live_chat",
+            choices=None,
+            allow_freeform=True,
+        )
+    )
+    write_clarifications(path, records)
+
+
+def _record_live_clarification_answer(
+    corpus_root: "Path | None",
+    *,
+    clarification_id: str,
+    declined: bool,
+    answer: str,
+) -> None:
+    """After ``interrupt`` returns, sync the ledger record with what actually
+    happened live: answered records get the answer; a decline leaves the
+    record ``open`` (still homework — nothing was actually resolved)."""
+    if corpus_root is None or declined:
+        return
+    from ..curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+        write_clarifications,
+    )
+
+    path = clarifications_path(corpus_root)
+    records = load_clarifications(path)
+    for i, rec in enumerate(records):
+        if rec.id != clarification_id:
+            continue
+        records[i] = rec.model_copy(
+            update={
+                "status": ClarificationRecordStatus.answered,
+                "answer": answer,
+                "answered_by": "live_chat_user",
+            }
+        )
+        write_clarifications(path, records)
+        return
 
 
 def _is_excluded(asset: Any) -> bool:
@@ -214,6 +294,7 @@ def make_tools(
     *,
     embedder: "Embedder | None" = None,
     enable_clarify: bool = False,
+    corpus_root: "Path | None" = None,
 ):
     """Factory: the governed read-only tools closed over deployment deps.
 
@@ -224,6 +305,12 @@ def make_tools(
     ``interrupt`` and therefore needs the inner agent compiled with a checkpointer
     (see ``build_agent_core``). The eval/offline path leaves it off, so the tool
     set and behaviour are unchanged there.
+
+    ``corpus_root``, when given, lets ``ask_user`` durably log every live question
+    (and its eventual answer) to the curator's ``clarifications.jsonl`` ledger
+    (``source="live_chat"``) so it survives past the conversation and shows up for
+    an admin to answer later. ``None`` (the default) skips the ledger write
+    entirely — used by every caller that predates this feature.
     """
     _ = gateway, identity  # owned by GovernanceMiddleware for data-touching tools
 
@@ -325,8 +412,21 @@ def make_tools(
         things you can answer by inspecting the schema or corpus. State plainly in
         ``why`` what is ambiguous. Returns the user's answer; continue with it.
         """
-        response = interrupt(clarification_request(question, why))
+        request = clarification_request(question, why)
+        _log_live_clarification(
+            corpus_root,
+            clarification_id=request["clarification_id"],
+            question=question,
+            why=why,
+        )
+        response = interrupt(request)
         parsed = parse_response(response)
+        _record_live_clarification_answer(
+            corpus_root,
+            clarification_id=request["clarification_id"],
+            declined=parsed["declined"],
+            answer=parsed["answer"],
+        )
         if parsed["declined"]:
             return CLARIFY_DECLINED
         return parsed["answer"]
