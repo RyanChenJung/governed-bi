@@ -384,6 +384,87 @@ def test_ask_user_decline_leaves_record_open(tmp_path):
     assert rec.answer is None
 
 
+# ── choices support: live ask_user can offer concrete options ── #
+
+_CHOICE_TURNS = [
+    ai_tool_turn(
+        "ask_user",
+        {
+            "question": "Revenue: payments.amount or line_items.unit_price?",
+            "why": "two competing revenue definitions exist",
+            "choices": ["payments.amount", "line_items.unit_price"],
+        },
+        "ch1",
+    ),
+    ai_tool_turn("inspect_schema", {"table_id": "tbl_beer_factory_transaction"}, "ch2"),
+    ai_tool_turn(
+        "run_query",
+        {"sql": 'SELECT SUM("PurchasePrice") AS total_revenue FROM "transaction"'},
+        "ch3",
+    ),
+    AIMessage(content="done"),
+]
+
+
+def test_ask_user_choices_surface_on_the_interrupt_request(tmp_path):
+    """Choices passed to ask_user reach the ClarificationRequest as the
+    ``[{"id","label"}]`` shape (contract §3), not empty."""
+    stack = _clarify_stack(_CHOICE_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+
+    result = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("choice1"))
+
+    req = result["__interrupt__"][0].value
+    assert req["choices"] == [
+        {"id": "opt_0", "label": "payments.amount"},
+        {"id": "opt_1", "label": "line_items.unit_price"},
+    ]
+
+
+def test_ask_user_choices_persist_on_the_ledger_record(tmp_path):
+    """The choices offered are also durably logged onto the ledger record, so an
+    admin answering later (offline tab) sees the real options, not freeform-only."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_CHOICE_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+
+    graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("choice2"))
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert len(records) == 1
+    assert records[0].choices == [
+        {"id": "opt_0", "label": "payments.amount"},
+        {"id": "opt_1", "label": "line_items.unit_price"},
+    ]
+
+
+def test_ask_user_choice_id_resolves_to_label_on_resume(tmp_path):
+    """Tapping a choice button resumes with a ``choice_id`` (contract §4); the
+    tool should hand the model back the human-readable label, not the opaque
+    id, and the ledger's persisted answer should match."""
+    from governed_bi.curator.clarifications import clarifications_path, load_clarifications
+
+    stack = _clarify_stack(_CHOICE_TURNS, tmp_path)
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    cfg = _cfg("choice3")
+
+    first = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, cfg)
+    req = first["__interrupt__"][0].value
+
+    resumed = graph.invoke(
+        Command(resume={"clarification_id": req["clarification_id"], "choice_id": "opt_1"}),
+        cfg,
+    )
+
+    answer = resumed["answer"]
+    clar = answer["provenance"]["clarifications"]
+    assert clar and clar[0]["answer"] == "line_items.unit_price"
+
+    records = load_clarifications(clarifications_path(tmp_path))
+    assert records[0].answer == "line_items.unit_price"
+
+
 def test_curator_records_default_source_and_round_trip(tmp_path):
     """Backward compat: a pre-existing (curator-authored) record with no
     ``source`` on disk defaults to ``"curator"`` and round-trips unchanged."""

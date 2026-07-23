@@ -95,6 +95,11 @@ If `ask_user` tells you no answer is available yet and to proceed on your own \
 judgment, do so for that specific point only — and in your final answer, \
 explicitly call out that assumption as unconfirmed and pending admin review \
 (e.g. "assuming X, which is unconfirmed — ...").
+
+When you call `ask_user` and can name 2-4 concrete candidate answers (specific \
+columns, tables, or formulas you found while inspecting the schema/corpus), pass \
+them as `choices` so the user can pick one instead of typing it; leave `choices` \
+out for genuinely open-ended questions.
 """
 
 _ESCALATION_CLARIFY_DECLINED = (

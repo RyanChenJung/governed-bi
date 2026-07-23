@@ -43,12 +43,21 @@ if TYPE_CHECKING:
     from ..llm import Embedder
 
 
+def _choices_to_ledger_shape(choices: list[str] | None) -> list[dict[str, str]] | None:
+    """Convert the model-facing ``list[str]`` choices into the ``[{"id","label"}]``
+    shape ``ClarificationRecord.choices`` / ``clarification_request`` expect."""
+    if not choices:
+        return None
+    return [{"id": f"opt_{i}", "label": c} for i, c in enumerate(choices)]
+
+
 def _log_live_clarification(
     corpus_root: "Path | None",
     *,
     clarification_id: str,
     question: str,
     why: str,
+    choices: list[dict[str, str]] | None = None,
 ) -> None:
     """Durably log a live ``ask_user`` question to the curator ledger, before
     ``interrupt`` pauses the turn — so the question survives even if nobody
@@ -79,7 +88,7 @@ def _log_live_clarification(
             scope=f"live_chat:{clarification_id}",
             question=f"{question} (why: {why})" if why else question,
             source="live_chat",
-            choices=None,
+            choices=choices,
             allow_freeform=True,
         )
     )
@@ -417,7 +426,7 @@ def make_tools(
         )
 
     @tool
-    def ask_user(question: str, why: str) -> str:
+    def ask_user(question: str, why: str, choices: list[str] | None = None) -> str:
         """Ask the user ONE short clarifying question and wait for their answer.
 
         Use ONLY when the question is genuinely ambiguous and the governed context
@@ -429,28 +438,48 @@ def make_tools(
         that specific assumption as unconfirmed in your final answer — keep going,
         do not stop the turn (a decline, unlike a defer, does stop the turn before
         you run again).
+
+        ``choices``: optional, 2-4 concrete mutually-exclusive plausible answers.
+        Pass them when you can actually enumerate the options — e.g. if "revenue"
+        could mean ``payments.amount`` or ``line_items.unit_price`` and you found
+        both while inspecting the schema, pass
+        ``choices=["payments.amount", "line_items.unit_price"]`` so the user can
+        tap one instead of typing it. The user can still answer freeform even
+        when choices are offered. Omit ``choices`` when the question is genuinely
+        open-ended and you have no concrete options to offer.
         """
-        request = clarification_request(question, why)
+        ledger_choices = _choices_to_ledger_shape(choices)
+        request = clarification_request(question, why, choices=ledger_choices)
         _log_live_clarification(
             corpus_root,
             clarification_id=request["clarification_id"],
             question=question,
             why=why,
+            choices=ledger_choices,
         )
         response = interrupt(request)
         parsed = parse_response(response)
+        # A tapped choice resolves to its raw id (e.g. "opt_0") via parse_response's
+        # generic contract; swap in the human-readable label here so the model (and
+        # the ledger) see the actual option text, not an opaque id it never chose.
+        answer = parsed["answer"]
+        if isinstance(response, dict) and response.get("choice_id") and ledger_choices:
+            for choice in ledger_choices:
+                if choice["id"] == response["choice_id"]:
+                    answer = choice["label"]
+                    break
         _record_live_clarification_answer(
             corpus_root,
             clarification_id=request["clarification_id"],
             declined=parsed["declined"],
             deferred=parsed["deferred"],
-            answer=parsed["answer"],
+            answer=answer,
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED
         if parsed["deferred"]:
             return CLARIFY_DEFERRED
-        return parsed["answer"]
+        return answer
 
     @tool
     def read_notes(note_id: str) -> str:
