@@ -23,6 +23,8 @@ import logging
 from .. import __version__
 from ..viz import presenter
 from .schemas import (
+    AllowUserClarificationRequest,
+    AllowUserClarificationResponse,
     AnswerResponse,
     AssetRowResponse,
     AssetTypeFilter,
@@ -53,6 +55,7 @@ from .schemas import (
     TableResponse,
     TableSummaryResponse,
 )
+from .runtime_toggles import get_allow_user_clarification, set_allow_user_clarification
 from .stack import ServeStack, build_stack
 
 logger = logging.getLogger("governed_bi.api")
@@ -148,8 +151,36 @@ def create_app(stack: ServeStack | None = None):
             can_search=stack.can_search,
             # Serve-time HITL: the agent may ask a clarifying question mid-turn via
             # a LangGraph interrupt the UI answers with stream.respond (streaming path).
-            can_clarify=stack.can_clarify,
+            # Recomputed live (Round D3) rather than read from the frozen
+            # ``stack.can_clarify`` — the admin can flip the underlying
+            # ``allow_user_clarification`` toggle via ``/settings/allow-user-
+            # clarification`` mid-process, and this must reflect that on the
+            # very next call, no restart.
+            can_clarify=stack.has_live_model
+            and stack.can_stream
+            and get_allow_user_clarification(
+                stack.corpus_root, stack.settings.allow_user_clarification
+            ),
         )
+
+    @app.post(
+        "/settings/allow-user-clarification",
+        response_model=AllowUserClarificationResponse,
+        tags=["meta"],
+    )
+    def set_allow_user_clarification_route(
+        req: AllowUserClarificationRequest,
+    ) -> AllowUserClarificationResponse:
+        """Flip the live ``allow_user_clarification`` override (Round D3), gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``. Effective on the very next
+        request — no restart — because every real gating point (this app's
+        ``/capabilities`` and ``/clarifications/{id}/answer``, and the streaming
+        chat graph's per-turn ``ask_user`` decision) re-checks the live value fresh
+        instead of the frozen ``Settings.allow_user_clarification``."""
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+        set_allow_user_clarification(stack.corpus_root, req.enabled)
+        return AllowUserClarificationResponse(allow_user_clarification=req.enabled)
 
     @app.get("/", include_in_schema=False)
     def root() -> dict:
@@ -646,7 +677,12 @@ def create_app(stack: ServeStack | None = None):
                             stack.corpus_root,
                             stack.datasource.corpus_pin,
                             chat=chat,
-                            certify=stack.settings.allow_user_clarification,
+                            # Live-checked (Round D3): flipping the toggle must
+                            # immediately change whether NEW answers auto-certify
+                            # or land as drafts, without a restart.
+                            certify=get_allow_user_clarification(
+                                stack.corpus_root, stack.settings.allow_user_clarification
+                            ),
                         )
                     except Exception:
                         logger.exception(

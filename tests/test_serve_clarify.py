@@ -358,6 +358,62 @@ def test_no_ask_user_tool_when_clarify_disabled(tmp_path):
     assert result["answer"]["tier"] == "governed"
 
 
+# ── Round D3: the live allow_user_clarification override, no restart ─────── #
+
+
+def test_live_override_flips_ask_user_on_the_same_running_stack(tmp_path):
+    """The whole point of the live override (``api/runtime_toggles.py``): a
+    process that started with ``allow_user_clarification`` off can turn
+    serve-time ``ask_user`` ON later, on the SAME ``ServeStack``/graph object,
+    with no rebuild — mirroring how a live-chat corpus fold becomes visible on
+    the next turn without a restart (``graph_app.answer()``'s per-turn corpus
+    reload). ``clarify_checkpointer`` here stands in for what ``api/stack.py``
+    now builds eagerly whenever a live model exists, regardless of the
+    startup toggle value, precisely so it is ready the moment this flips on.
+    """
+    from governed_bi.api.runtime_toggles import (
+        get_allow_user_clarification,
+        set_allow_user_clarification,
+    )
+
+    # One scripted trajectory covering BOTH turns below: the first 3 responses
+    # answer the toggle-off turn (no ask_user reached), the 4th is an ask_user
+    # call for the toggle-on turn. Sharing one FakeToolModel/graph/stack across
+    # both invokes (only the corpus_root's runtime-toggles file changes in
+    # between) is the actual proof this is live, not a rebuilt process.
+    combined_turns = [
+        ai_tool_turn("inspect_schema", {"table_id": "tbl_beer_factory_transaction"}, "d1"),
+        ai_tool_turn(
+            "run_query",
+            {"sql": 'SELECT SUM("PurchasePrice") AS total_revenue FROM "transaction"'},
+            "d2",
+        ),
+        AIMessage(content="done"),
+        ai_tool_turn(
+            "ask_user", {"question": "Gross or net revenue?", "why": "ambiguous"}, "d3"
+        ),
+    ]
+    base = _clarify_stack(combined_turns, tmp_path)
+    # Simulate a process that started with the toggle off: settings says False,
+    # but (per the new api/stack.py) the checkpointer was still built eagerly.
+    stack = replace(base, settings=replace(base.settings, allow_user_clarification=False))
+    assert get_allow_user_clarification(tmp_path, stack.settings.allow_user_clarification) is False
+
+    graph = build_chat_graph(stack, checkpointer=InMemorySaver())
+    result_off = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("d-off"))
+    assert "__interrupt__" not in result_off  # off: ask_user not offered this turn
+
+    # Flip the live override on. Same stack, same graph, same chat_model, no
+    # restart — only the corpus_root's runtime-toggles file changed.
+    set_allow_user_clarification(tmp_path, True)
+    assert get_allow_user_clarification(tmp_path, stack.settings.allow_user_clarification) is True
+
+    result_on = graph.invoke({"messages": [HumanMessage(REVENUE_Q)]}, _cfg("d-on"))
+    assert "__interrupt__" in result_on, "same process, toggle now on: ask_user offered"
+    req = result_on["__interrupt__"][0].value
+    assert req["question"] == "Gross or net revenue?"
+
+
 # ── Round 6: every live ask_user call durably logs to the curator ledger ── #
 
 

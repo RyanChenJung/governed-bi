@@ -128,6 +128,21 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
         # ``api/app.py``'s ``/corpus/*`` routes already do per request.
         corpus_analyst = load_corpus(stack.corpus_root).for_analyst()
 
+        # Same reasoning, live-toggle edition (Round D3): re-check
+        # ``allow_user_clarification`` fresh from the runtime-toggles file every
+        # turn instead of trusting ``stack.settings.allow_user_clarification``
+        # (frozen at process start). ``stack.clarify_checkpointer`` is built
+        # whenever a live model exists (see ``api/stack.py``), so it is ready to
+        # use the moment the toggle flips on — only whether it gets PASSED down
+        # (and therefore whether ``analyst/agent.py``'s ``clarify_on`` is true
+        # this turn) depends on the live value.
+        from governed_bi.api.runtime_toggles import get_allow_user_clarification
+
+        live_clarify_on = get_allow_user_clarification(
+            stack.corpus_root, stack.settings.allow_user_clarification
+        )
+        clarify_checkpointer = stack.clarify_checkpointer if live_clarify_on else None
+
         try:
             writer = get_stream_writer()
         except Exception:  # not in a streaming context (e.g. plain invoke)
@@ -162,7 +177,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                     narrator=stack.narrator,
                     working_memory=memory,
                     on_event=writer,
-                    clarify_checkpointer=stack.clarify_checkpointer,
+                    clarify_checkpointer=clarify_checkpointer,
                     clarify_thread=clarify_thread,
                     clarify_resume=resume,
                     n_human=n_human,

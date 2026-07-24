@@ -12,6 +12,15 @@ Covers the three things the toggle must do when OFF:
    draft — never reaching ``select_notes_for_injection`` — instead of an
    auto-certified asset. A human later promotes it via
    ``AssetBag.approve_draft``.
+
+Round D3 adds the live-mutable override (``api/runtime_toggles.py``) so an
+admin can flip this without a restart. That live-flip behavior end-to-end
+(same running graph, ``ask_user`` toggles on/off) is covered in
+``test_serve_clarify.py``'s ``test_live_override_flips_ask_user_on_the_same_running_stack``,
+which needs the real chat graph wiring; this file covers the smaller units:
+the override file's read/write semantics, ``build_stack``'s now-eager
+checkpointer construction, and the offline certify path checking the live
+value instead of the frozen ``Settings``.
 """
 
 from __future__ import annotations
@@ -19,6 +28,11 @@ from __future__ import annotations
 import json
 
 from governed_bi.analyst.tools import make_tools
+from governed_bi.api.runtime_toggles import (
+    get_allow_user_clarification,
+    set_allow_user_clarification,
+    toggles_path,
+)
 from governed_bi.corpus import Corpus
 from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
 from governed_bi.curator.asset_bag import AssetBag, CaveatFoldCounts
@@ -74,10 +88,16 @@ def _metric_json(concept_name: str, base_table: str, expression: str) -> str:
 
 
 def test_can_clarify_false_when_toggle_off_even_with_live_model_and_streaming(monkeypatch):
-    """build_stack()'s can_clarify (and, more importantly, whether the
-    clarify_checkpointer is even constructed — the real switch downstream, see
-    ``analyst/agent.py``'s ``clarify_on = clarify_checkpointer is not None``)
-    both require allow_user_clarification, not just has_live_model/can_stream.
+    """build_stack()'s can_clarify requires allow_user_clarification, not just
+    has_live_model/can_stream.
+
+    Round D3: ``clarify_checkpointer`` is now built whenever a live model
+    exists, REGARDLESS of the startup toggle value (see ``api/stack.py``) —
+    ready to use the moment the live override (``api/runtime_toggles.py``)
+    flips clarify on, with no restart. It is therefore no longer itself proof
+    that clarify is off; ``can_clarify`` (and, at serve time, the live
+    override checked fresh per turn by ``api/graph_app.py``) is the real
+    switch now.
 
     Forces has_live_model=True via monkeypatch (no real API key needed) so
     this actually exercises the allow_user_clarification gate rather than
@@ -101,7 +121,58 @@ def test_can_clarify_false_when_toggle_off_even_with_live_model_and_streaming(mo
     stack = stack_mod.build_stack(settings)
     assert stack.has_live_model is True  # the monkeypatch took effect
     assert stack.can_clarify is False
-    assert stack.clarify_checkpointer is None
+    assert stack.clarify_checkpointer is not None  # built eagerly, ready for a live flip-on
+
+
+def test_live_override_defaults_to_settings_value_until_flipped(tmp_path):
+    """No override file yet -> the live value falls back to Settings'
+    ``allow_user_clarification`` (default behavior stays unchanged); once
+    flipped, the write is visible to a fresh read immediately."""
+    assert not toggles_path(tmp_path).exists()
+    assert get_allow_user_clarification(tmp_path, True) is True
+    assert get_allow_user_clarification(tmp_path, False) is False
+
+    set_allow_user_clarification(tmp_path, True)
+    assert toggles_path(tmp_path).exists()
+    # The override now wins regardless of what Settings says.
+    assert get_allow_user_clarification(tmp_path, False) is True
+
+    set_allow_user_clarification(tmp_path, False)
+    assert get_allow_user_clarification(tmp_path, True) is False
+
+
+def test_certify_follows_the_live_override_not_the_frozen_settings(tmp_path):
+    """The offline fold path (``/clarifications/{id}/answer`` in api/app.py,
+    ``AssetBag.record_caveats_detail`` here) takes ``certify`` as a plain bool
+    argument; the live-checked value must be what callers pass, not
+    ``Settings.allow_user_clarification`` directly, so flipping the override
+    changes fold behavior for the very next answered clarification."""
+    bag = _bag()
+    chat = StaticChatClient(
+        _metric_json("total_revenue_payments_basis", "payments", "SUM(payments.amount)")
+    )
+
+    # Settings says True (would auto-certify if read directly), but the live
+    # override says False -> the fold must land as an excluded draft, not a
+    # certified metric.
+    set_allow_user_clarification(tmp_path, False)
+    certify = get_allow_user_clarification(tmp_path, True)
+    assert certify is False
+    counts = bag.record_caveats_detail([CLAR], chat=chat, certify=certify)
+    assert counts == CaveatFoldCounts(created=1)
+    assert not bag.metrics
+    [draft] = bag.notes.values()
+    assert draft.governance is not None and draft.governance.excluded is True
+
+    # Flip the override on; the SAME kind of call now auto-certifies.
+    set_allow_user_clarification(tmp_path, True)
+    certify = get_allow_user_clarification(tmp_path, False)  # Settings says False; override wins
+    assert certify is True
+    bag2 = _bag()
+    clar2 = CLAR.model_copy(update={"id": "clar_toggle_on"})
+    counts2 = bag2.record_caveats_detail([clar2], chat=chat, certify=certify)
+    assert counts2 == CaveatFoldCounts(created=1)
+    assert bag2.metrics  # auto-certified straight into a MetricAsset
 
 
 def test_ask_user_tool_not_registered_when_clarify_disabled():

@@ -25,17 +25,10 @@ from governed_bi.api.stack import build_stack
 # This app is only ever mounted on the LangGraph server, which fronts the streaming
 # chat graph, so streaming IS available here - advertise it. build_stack defaults
 # can_stream False for the plain REST factory, which has no streaming endpoint.
-# can_clarify was computed by build_stack() against that stale can_stream=False
-# default, so it must be recomputed here too (has_live_model AND can_stream AND
-# the allow_user_clarification opt-in) — otherwise serve-time ask_user/interrupt
-# is wired end-to-end but permanently reports unavailable to the frontend, or
-# (if recomputed naively) the opt-in toggle is bypassed entirely.
+# (Round D3: ``create_app``'s ``/capabilities`` route now recomputes can_clarify
+# live off ``stack.can_stream`` and the runtime-toggles override on every call, so
+# there is no longer a frozen ``can_clarify`` value to bake in here — only
+# can_stream needs forcing to True.)
 _stack = build_stack()
-app = create_app(
-    dataclasses.replace(
-        _stack,
-        can_stream=True,
-        can_clarify=_stack.has_live_model and _stack.settings.allow_user_clarification,
-    )
-)
+app = create_app(dataclasses.replace(_stack, can_stream=True))
 """The ASGI app the LangGraph server mounts (see module docstring)."""

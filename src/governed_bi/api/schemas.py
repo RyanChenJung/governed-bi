@@ -405,3 +405,14 @@ class ClarificationAnswerRequest(BaseModel):
     choice_id: str | None = None
     answer: str | None = None
     answered_by: str = "admin"
+
+
+# ── live allow_user_clarification override (gated on capabilities.can_edit) ── #
+class AllowUserClarificationRequest(BaseModel):
+    """Body for ``POST /settings/allow-user-clarification``."""
+
+    enabled: bool
+
+
+class AllowUserClarificationResponse(BaseModel):
+    allow_user_clarification: bool  # the new live value, effective immediately

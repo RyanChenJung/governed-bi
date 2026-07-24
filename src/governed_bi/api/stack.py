@@ -181,14 +181,20 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
     # agent to pause/resume. H10/F7: durable via make_clarify_checkpointer
     # (distinct path); InMemorySaver when kind=memory.
     #
-    # NOTE: downstream (analyst/agent.py's ``clarify_on = clarify_checkpointer is
-    # not None``), the checkpointer being non-None is the REAL switch that enables
-    # the ask_user tool — ``can_clarify`` below is only a reported capability. So
-    # ``allow_user_clarification`` must gate checkpointer construction itself, not
-    # just ``can_clarify``, or the toggle would be cosmetic.
+    # Built whenever a live model exists, REGARDLESS of
+    # ``allow_user_clarification`` (Round D3): the toggle now has a live
+    # override (``api/runtime_toggles.py``) that a `/settings/...` call can
+    # flip mid-process, with no restart. If construction stayed gated on the
+    # startup value of the toggle, flipping it on later would have no
+    # checkpointer to use. The checkpointer being built is therefore no longer
+    # itself the "is clarify on" switch — per-turn callers (``graph_app.py``'s
+    # ``answer()`` node) decide whether to actually PASS this checkpointer down
+    # by checking the live override fresh each turn; ``analyst/agent.py``'s
+    # ``clarify_on = clarify_checkpointer is not None`` still holds, just fed a
+    # live-checked value instead of this frozen one directly.
     clarify_checkpointer = None
     can_clarify = False
-    if has_live and settings.allow_user_clarification:
+    if has_live:
         from ..analyst.run_log import make_clarify_checkpointer
 
         try:
@@ -199,7 +205,10 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
             from langgraph.checkpoint.memory import InMemorySaver
 
             clarify_checkpointer = InMemorySaver()
-        can_clarify = bool(settings.can_stream)
+        # Informational only (the startup value) — `/capabilities` recomputes
+        # this live (see ``api/app.py``), since this field never changes again
+        # once the stack is built.
+        can_clarify = bool(settings.can_stream) and settings.allow_user_clarification
 
     # conversation_checkpointer is lazy — built only by build_standalone_chat_graph
     # (L3). Eager construction here opened a sqlite file on every build_stack /
