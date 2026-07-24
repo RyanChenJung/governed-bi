@@ -856,7 +856,11 @@ def build_curated_corpus_with_sme(
 
 
 def apply_answered_clarifications_to_corpus(
-    corpus_root: Path | str, schema: str, *, chat: "ChatClient | None" = None
+    corpus_root: Path | str,
+    schema: str,
+    *,
+    chat: "ChatClient | None" = None,
+    certify: bool = True,
 ) -> int:
     """Poll step: fold ledger records answered outside the SME fill loop into
     an already-served corpus.
@@ -881,6 +885,11 @@ def apply_answered_clarifications_to_corpus(
     ``NoteAsset`` every time (see ``curator.enhancer``). ``None`` (the default)
     keeps the legacy verbatim-note fold, unchanged for every pre-existing
     caller/test.
+
+    ``certify`` (default True) threads the ``allow_user_clarification``
+    settings toggle down to :meth:`AssetBag.record_caveats`'s Enhancer "new
+    concept" branch — False writes an excluded, uncertified draft instead of
+    trusting it immediately (see ``AssetBag._record_draft``).
     """
     from ..corpus.loader import load_corpus
     from ..corpus.schemas import TableAsset
@@ -914,7 +923,7 @@ def apply_answered_clarifications_to_corpus(
             bag.rules[asset.id] = asset  # type: ignore[assignment]
 
     applied = bag.apply_answered_clarifications(pending)
-    caveats = bag.record_caveats(pending, chat=chat)
+    caveats = bag.record_caveats(pending, chat=chat, certify=certify)
     if applied or caveats:
         bag.write(corpus_root)
 

@@ -38,6 +38,8 @@ from .schemas import (
     ConflictResolveRequest,
     ConflictResolveResponse,
     ConflictRowResponse,
+    DraftApproveRequest,
+    DraftApproveResponse,
     EditRequest,
     EditResponse,
     HealthResponse,
@@ -403,6 +405,69 @@ def create_app(stack: ServeStack | None = None):
             detail=msg,
         )
 
+    @app.post(
+        "/corpus/drafts/{draft_id}/approve",
+        response_model=DraftApproveResponse,
+        tags=["corpus"],
+    )
+    def approve_draft(draft_id: str, req: DraftApproveRequest) -> DraftApproveResponse:
+        """Admin approval for a note written by ``AssetBag._record_draft`` (an
+        Enhancer-decided new concept held back because
+        ``allow_user_clarification`` is off — gated on ``capabilities.can_edit``
+        like ``/corpus/edit``). Certifies the note and clears
+        ``governance.excluded``, so it reaches the Analyst's prompt going
+        forward. Distinct from ``/corpus/conflicts/{id}/resolve``: a draft has
+        no existing asset to replace. 404 on an unknown/non-draft id.
+        """
+        from ..corpus import load_corpus
+        from ..corpus.schemas import NoteAsset, TableAsset
+        from ..curator.asset_bag import AssetBag
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        current = load_corpus(stack.corpus_root)
+        note = current.by_id(draft_id)
+        if (
+            not isinstance(note, NoteAsset)
+            or note.governance is None
+            or not note.governance.excluded
+            or note.conflict_status is not None
+        ):
+            raise HTTPException(
+                status_code=404, detail=f"unknown draft id={draft_id!r}"
+            )
+
+        schema = _corpus_subtree_for_asset(note, stack.corpus_root, current)
+        if schema is None:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot determine corpus/<schema>/ subtree for this draft",
+            )
+
+        schema_corpus = load_corpus(stack.corpus_root, schema=schema)
+        tables = [a for a in schema_corpus.assets if isinstance(a, TableAsset)]
+        other = [a for a in schema_corpus.assets if not isinstance(a, TableAsset)]
+        bag = AssetBag.from_tables(schema, tables)
+        for asset in other:
+            if asset.asset_type == "metric":
+                bag.metrics[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "note":
+                bag.notes[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "join":
+                bag.joins[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "term":
+                bag.terms[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "few_shot":
+                bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+
+        msg = bag.approve_draft(draft_id, answered_by=req.answered_by)
+        if not msg.startswith("ok:"):
+            raise HTTPException(status_code=422, detail=msg)
+        bag.write(stack.corpus_root)
+
+        return DraftApproveResponse(approved=True, draft_id=draft_id, detail=msg)
+
     @app.post("/corpus/edit", response_model=EditResponse, tags=["corpus"])
     def corpus_edit(req: EditRequest) -> EditResponse:
         """Validate a corpus asset and, in dev, write it to the YAML tree.
@@ -578,7 +643,10 @@ def create_app(stack: ServeStack | None = None):
                         chat = LangChainChatClient(stack.chat_model)
                     try:
                         apply_answered_clarifications_to_corpus(
-                            stack.corpus_root, stack.datasource.corpus_pin, chat=chat
+                            stack.corpus_root,
+                            stack.datasource.corpus_pin,
+                            chat=chat,
+                            certify=stack.settings.allow_user_clarification,
                         )
                     except Exception:
                         logger.exception(

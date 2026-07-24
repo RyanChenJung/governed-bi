@@ -82,6 +82,12 @@ sqlite_path = "data/bird/beer_factory.sqlite" # repo-root-relative
 # forces can_stream=True regardless of this value.
 can_stream = false
 allow_edit = true                        # corpus file-write (dev); set false for prod-like
+# allow_user_clarification: opt-in for the live ask_user/defer clarification
+# flow and auto-certifying answered clarifications into the corpus. Default
+# false so the repo ships matching Minhao's fail-closed baseline (nothing
+# served until an analyst approves it); set true to opt into the
+# self-correcting-in-the-moment philosophy instead.
+allow_user_clarification = false
 cors_origins = ["http://localhost:3000"]
 
 # Memory / cache / few-shot numeric gates (Architecture §7) are still code

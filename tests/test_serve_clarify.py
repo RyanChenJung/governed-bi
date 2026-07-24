@@ -89,7 +89,7 @@ def _clarify_stack(turns: list, corpus_root: Path) -> ServeStack:
     return ServeStack(
         corpus_full=corpus_full,
         corpus_analyst=corpus_full.for_analyst(),
-        settings=Settings.for_env(Environment.dev),
+        settings=Settings.for_env(Environment.dev, allow_user_clarification=True),
         dialect="sqlite",
         sqlite_path=BIRD_DB,
         identity=Identity(user="demo", all_access=True),

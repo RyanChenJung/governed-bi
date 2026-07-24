@@ -692,7 +692,11 @@ class AssetBag:
         return f"ok: wrote {note_id}"
 
     def record_caveats(
-        self, records: Iterable[ClarificationRecord], *, chat: "ChatClient | None" = None
+        self,
+        records: Iterable[ClarificationRecord],
+        *,
+        chat: "ChatClient | None" = None,
+        certify: bool = True,
     ) -> int:
         """Fold answered clarifications that don't map to an asset (``pair:`` /
         ``query:``/``live_chat:`` scopes — trap/annotation-error findings and
@@ -709,11 +713,23 @@ class AssetBag:
         partially-contradictory "revenue" notes from 3 rephrasings of the same
         question). ``chat=None`` (the default) keeps the legacy verbatim-note
         behavior — every pre-existing caller/test round-trips unchanged.
+
+        ``certify`` (default True, matching every pre-existing caller) gates
+        whether an Enhancer-decided genuinely-new concept is written trusted
+        (``certified=True``, servable immediately) or as an excluded draft
+        awaiting human approval (see :meth:`_record_draft`) — the
+        ``allow_user_clarification`` settings toggle threads through to this.
+        Only affects the Enhancer's "new concept" branch; duplicate/conflict
+        handling and the ``chat=None`` legacy fallback are unchanged.
         """
-        return self.record_caveats_detail(records, chat=chat).total
+        return self.record_caveats_detail(records, chat=chat, certify=certify).total
 
     def record_caveats_detail(
-        self, records: Iterable[ClarificationRecord], *, chat: "ChatClient | None" = None
+        self,
+        records: Iterable[ClarificationRecord],
+        *,
+        chat: "ChatClient | None" = None,
+        certify: bool = True,
     ) -> "CaveatFoldCounts":
         """Same fold as :meth:`record_caveats`, returning the created/
         duplicate/conflict/legacy breakdown instead of a single count.
@@ -736,7 +752,7 @@ class AssetBag:
                 continue
             except ValueError:
                 pass  # non-asset scope (pair:/query:/live_chat:/…) → record as a caveat
-            self._fold_one_caveat(rec, text, enhancer, counts)
+            self._fold_one_caveat(rec, text, enhancer, counts, certify=certify)
         return counts
 
     def _fold_one_caveat(
@@ -745,6 +761,8 @@ class AssetBag:
         text: str,
         enhancer: "Enhancer | None",
         counts: "CaveatFoldCounts",
+        *,
+        certify: bool = True,
     ) -> None:
         by = rec.answered_by or "sme"
         if enhancer is not None:
@@ -763,7 +781,7 @@ class AssetBag:
                 )
                 decision = None
             if decision is not None:
-                self._apply_enhancer_decision(rec, by, decision, counts)
+                self._apply_enhancer_decision(rec, by, decision, counts, certify=certify)
                 return
         # chat is None, or the Enhancer errored: legacy verbatim-note fallback.
         msg = self.propose_note(
@@ -783,6 +801,8 @@ class AssetBag:
         answered_by: str,
         decision: "EnhancerDecision",
         counts: "CaveatFoldCounts",
+        *,
+        certify: bool = True,
     ) -> None:
         known_ids = self._all_asset_ids()
         if decision.duplicate_of and decision.duplicate_of in known_ids:
@@ -811,6 +831,24 @@ class AssetBag:
         # Genuinely new concept (or a duplicate_of/conflict_with id the Enhancer
         # hallucinated — never points at a real asset, so treat as new rather
         # than silently dropping the clarification).
+        if not certify:
+            # allow_user_clarification is off: Minhao's fail-closed philosophy —
+            # nothing this session's Enhancer invents ships until an analyst
+            # explicitly approves it. Always written as an excluded, uncertified
+            # NoteAsset (see :meth:`_record_draft`) — a bare MetricAsset has no
+            # ``governance`` field to exclude on, so a metric-shaped decision is
+            # stored as a note body too, exactly as :meth:`_record_conflict`
+            # already does for a metric-shaped conflict.
+            msg = self._record_draft(rec, answered_by, decision)
+            if msg.startswith("ok:"):
+                counts.created += 1
+            else:
+                logger.warning(
+                    "Enhancer draft for clarification %s could not be written (%s)",
+                    rec.id,
+                    msg,
+                )
+            return
         if decision.asset_type == "metric" and decision.base_table and decision.expression:
             msg = self.upsert_metric(
                 decision.concept_name,
@@ -842,6 +880,92 @@ class AssetBag:
         )
         if msg.startswith("ok:"):
             counts.created += 1
+
+    def _record_draft(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+    ) -> str:
+        """``allow_user_clarification=False`` fold: a genuinely new concept from
+        an answered clarification, held for human review instead of trusted
+        immediately (Minhao's fail-closed philosophy vs. this session's
+        self-correcting-in-the-moment default).
+
+        Written as a ``NoteAsset`` with ``publication_status=proposed`` AND
+        ``governance.excluded=True`` — the same shape :meth:`_record_conflict`
+        uses, and for the same reason: ``analyst/note_inject.select_notes_for_injection``
+        gates on ``governance.excluded`` alone, so that is the field that
+        actually keeps this out of the Analyst's prompt. Unlike a conflict note,
+        there is no existing asset to point at, so ``related_notes``/
+        ``conflict_status`` stay unset — a human promotes this via
+        :meth:`approve_draft`, not :meth:`resolve_conflict`.
+        """
+        body = None
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            body = f"base_table={decision.base_table}\nexpression={decision.expression}"
+        base_id = f"note_{_slug(self.schema)}_{_slug(decision.concept_name)}_draft"
+        note_id = base_id
+        suffix = 2
+        while note_id in self.notes:
+            note_id = f"{base_id}_{suffix}"
+            suffix += 1
+        audit = _inference_audit(
+            model=self.model_name,
+            source=ProvenanceSource.human,
+            status=ProvenanceStatus.proposed,
+            by=answered_by,
+            built_at=_now_iso(),
+        )
+        try:
+            asset = NoteAsset.model_validate(
+                {
+                    "id": note_id,
+                    "kind": NoteKind.context,
+                    "summary": decision.generalized_definition,
+                    "body": body,
+                    "confidence": 0.5,
+                    "publication_status": ProvenanceStatus.proposed,
+                    "source_question": rec.question,
+                    "source_kind": rec.source,
+                    "governance": Governance(
+                        excluded=True,
+                        reason="awaiting analyst approval (allow_user_clarification is off)",
+                        by=answered_by,
+                        at=_now_iso(),
+                    ),
+                    "audit": audit,
+                }
+            )
+        except ValidationError as err:
+            return f"error: invalid draft NoteAsset: {err}"
+        self.notes[note_id] = asset
+        return f"ok: wrote {note_id}"
+
+    def approve_draft(self, asset_id: str, *, answered_by: str | None = None) -> str:
+        """Promote a note written by :meth:`_record_draft` (or any other
+        excluded/proposed ``NoteAsset``) to certified + included — the human
+        approval step Minhao's philosophy requires before anything this
+        session's Enhancer invented is served.
+
+        Distinct from :meth:`resolve_conflict`: a draft has no existing target
+        asset to replace, so this just certifies the note in place and clears
+        ``governance.excluded``.
+        """
+        note = self.notes.get(asset_id)
+        if note is None:
+            return f"error: unknown draft id={asset_id!r}"
+        if note.governance is None or not note.governance.excluded:
+            return f"error: {asset_id!r} is not an excluded draft"
+        new_audit = self._audit(certified=True, answered_by=answered_by, built_at=_now_iso())
+        self.notes[asset_id] = note.model_copy(
+            update={
+                "publication_status": ProvenanceStatus.certified,
+                "governance": Governance(excluded=False),
+                "audit": new_audit,
+            }
+        )
+        return f"ok: approved {asset_id}"
 
     def _record_conflict(
         self,

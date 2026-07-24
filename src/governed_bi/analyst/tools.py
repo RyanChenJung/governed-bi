@@ -104,6 +104,7 @@ def _record_live_clarification_answer(
     answer: str,
     corpus: "Corpus | None" = None,
     enhancer_chat_model: Any | None = None,
+    certify: bool = True,
 ) -> None:
     """After ``interrupt`` returns, sync the ledger record with what actually
     happened live: answered records get the answer; a decline or a defer both
@@ -114,6 +115,13 @@ def _record_live_clarification_answer(
     ``POST /clarifications/{id}/answer`` route, round 10) — otherwise an
     answer picked live in the chat never produces an Agreed Assumption, only
     one submitted later from the offline admin tab does.
+
+    ``certify`` (default True) is ``allow_user_clarification`` threaded down
+    from ``make_tools``'s ``enable_clarify`` — in practice this path only
+    runs when ``ask_user`` was offered, which itself requires
+    ``allow_user_clarification=True``, so ``certify`` is always True on the
+    live path today. Threaded through anyway so the fold logic never silently
+    diverges from the offline ``POST /clarifications/{id}/answer`` route.
     """
     if corpus_root is None or declined or deferred:
         return
@@ -137,12 +145,16 @@ def _record_live_clarification_answer(
             }
         )
         write_clarifications(path, records)
-        _fold_answered_clarifications(corpus_root, corpus, enhancer_chat_model)
+        _fold_answered_clarifications(corpus_root, corpus, enhancer_chat_model, certify=certify)
         return
 
 
 def _fold_answered_clarifications(
-    corpus_root: "Path", corpus: "Corpus | None", enhancer_chat_model: Any | None = None
+    corpus_root: "Path",
+    corpus: "Corpus | None",
+    enhancer_chat_model: Any | None = None,
+    *,
+    certify: bool = True,
 ) -> None:
     """Best-effort: run the round-10 poll step for every schema this corpus
     covers. Errors are logged, not raised — the ledger write above already
@@ -174,7 +186,9 @@ def _fold_answered_clarifications(
     schemas = {a.schema for a in corpus.assets if isinstance(a, TableAsset)}
     for schema in schemas:
         try:
-            apply_answered_clarifications_to_corpus(corpus_root, schema, chat=chat)
+            apply_answered_clarifications_to_corpus(
+                corpus_root, schema, chat=chat, certify=certify
+            )
         except Exception:
             logger.exception(
                 "auto-fold of a live-chat-answered clarification into schema %r failed; "
@@ -535,6 +549,7 @@ def make_tools(
             answer=answer,
             corpus=corpus,
             enhancer_chat_model=enhancer_chat_model,
+            certify=enable_clarify,
         )
         if parsed["declined"]:
             return CLARIFY_DECLINED

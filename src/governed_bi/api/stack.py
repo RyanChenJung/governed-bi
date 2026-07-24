@@ -180,9 +180,15 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
     # Serve-time HITL (ask_user -> interrupt) needs a checkpointer for the inner
     # agent to pause/resume. H10/F7: durable via make_clarify_checkpointer
     # (distinct path); InMemorySaver when kind=memory.
+    #
+    # NOTE: downstream (analyst/agent.py's ``clarify_on = clarify_checkpointer is
+    # not None``), the checkpointer being non-None is the REAL switch that enables
+    # the ask_user tool — ``can_clarify`` below is only a reported capability. So
+    # ``allow_user_clarification`` must gate checkpointer construction itself, not
+    # just ``can_clarify``, or the toggle would be cosmetic.
     clarify_checkpointer = None
     can_clarify = False
-    if has_live:
+    if has_live and settings.allow_user_clarification:
         from ..analyst.run_log import make_clarify_checkpointer
 
         try:

@@ -316,6 +316,19 @@ class ConflictResolveResponse(BaseModel):
     detail: str
 
 
+# ── allow_user_clarification=False draft approval (AssetBag.approve_draft) ── #
+class DraftApproveRequest(BaseModel):
+    """Body for ``POST /corpus/drafts/{id}/approve``."""
+
+    answered_by: str = "admin"
+
+
+class DraftApproveResponse(BaseModel):
+    approved: bool
+    draft_id: str
+    detail: str
+
+
 # ── chat ──────────────────────────────────────────────────────────────────── #
 class TurnIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)

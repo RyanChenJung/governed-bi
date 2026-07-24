@@ -194,6 +194,12 @@ class Settings:
     # ── Serve / API (see [serve]) ──
     can_stream: bool = False  # True when a streaming chat graph is fronted
     allow_edit: bool = True  # corpus file-write; for_env sets False in prod
+    # Opt-in for the live ask_user / defer clarification flow and auto-certifying
+    # answered clarifications into the corpus. Default False: without any config
+    # the repo behaves exactly like vanilla governed-bi (Minhao's fail-closed,
+    # analyst-approves-everything philosophy). Set True to opt into this
+    # session's self-correcting-in-the-moment philosophy instead.
+    allow_user_clarification: bool = False
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
 
     # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
@@ -249,6 +255,7 @@ class Settings:
         corpus_root: str | None = None,
         can_stream: bool | None = None,
         allow_edit: bool | None = None,
+        allow_user_clarification: bool | None = None,
         cors_origins: tuple[str, ...] | None = None,
         conversation_checkpointer_kind: str | None = None,
         conversation_checkpointer_path: str | None = None,
@@ -268,6 +275,8 @@ class Settings:
             base["can_stream"] = can_stream
         if allow_edit is not None:
             base["allow_edit"] = allow_edit
+        if allow_user_clarification is not None:
+            base["allow_user_clarification"] = allow_user_clarification
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
         if conversation_checkpointer_kind is not None:
@@ -458,6 +467,9 @@ def load_settings(
     serve = data.get("serve", {})
     can_stream = bool(serve["can_stream"]) if "can_stream" in serve else None
     allow_edit = bool(serve["allow_edit"]) if "allow_edit" in serve else None
+    allow_user_clarification = (
+        bool(serve["allow_user_clarification"]) if "allow_user_clarification" in serve else None
+    )
     cors_origins = (
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
@@ -479,6 +491,7 @@ def load_settings(
         corpus_root=str(corpus_root),
         can_stream=can_stream,
         allow_edit=allow_edit,
+        allow_user_clarification=allow_user_clarification,
         cors_origins=cors_origins,
         conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
         conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,
