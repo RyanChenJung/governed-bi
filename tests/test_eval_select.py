@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from governed_bi.eval.select import majority_vote
+from governed_bi.eval.select import PairwiseVerdict, judge_pairwise, majority_vote, llm_judge_tournament
+from governed_bi.llm import StaticChatClient
 
 
 @dataclass
@@ -121,3 +122,164 @@ def test_majority_vote_unanimous_pool():
     assert result.winner_group_size == 3
     assert not result.tied
     assert result.winner_index == 0
+
+
+# --------------------------------------------------------------------------- #
+# Round 4: llm_judge_tournament -- deterministic fake judges, no real chat/DB.
+# --------------------------------------------------------------------------- #
+
+
+def _fake_judge_by_sql(preferred_sql: str):
+    """A fake judge callable that always picks whichever side's SQL equals
+    ``preferred_sql`` (mirrors the real ``judge_pairwise`` signature/return
+    type), and ties when neither side is the preferred one."""
+
+    def judge(question, sql_a, result_a, sql_b, result_b):  # noqa: ANN001
+        if sql_a == preferred_sql:
+            return PairwiseVerdict(winner="A", reasoning="a is preferred", raw_reply="")
+        if sql_b == preferred_sql:
+            return PairwiseVerdict(winner="B", reasoning="b is preferred", raw_reply="")
+        return PairwiseVerdict(winner="TIE", reasoning="neither preferred", raw_reply="")
+
+    return judge
+
+
+def test_tournament_picks_undisputed_winner_over_two_groups():
+    gw = _FakeGateway({"SELECT A": [(1,)], "SELECT B": [(2,)]})
+    sqls = ["SELECT A", "SELECT B"]
+    result = llm_judge_tournament(
+        sqls, "some question", gw, judge=_fake_judge_by_sql("SELECT B")
+    )
+    assert result.winner_sql == "SELECT B"
+    assert result.n_groups == 2
+    assert len(result.verdicts) == 1  # k=2 groups -> 1 pairwise call
+    assert not result.tied
+
+
+def test_tournament_recovers_minority_correct_group():
+    """This is exactly the G-02/I-03 shape from Round 3: the WRONG answer has
+    plurality support (4 of 6 candidates agree on it), the correct answer is
+    the minority (2 of 6) -- majority_vote would pick the wrong group, but a
+    judge that consistently recognizes the correct SQL's logic overturns it."""
+    gw = _FakeGateway(
+        {
+            "SELECT WRONG": [(999,)],
+            "SELECT RIGHT": [(1,)],
+        }
+    )
+    # 4 candidates land in the WRONG group, 2 in the RIGHT group.
+    sqls = [
+        "SELECT WRONG",
+        "SELECT WRONG",
+        "SELECT RIGHT",
+        "SELECT WRONG",
+        "SELECT RIGHT",
+        "SELECT WRONG",
+    ]
+    # majority_vote would pick the WRONG group (size 4 > size 2).
+    assert majority_vote(sqls, gw).winner_sql == "SELECT WRONG"
+
+    # A judge that always recognizes "SELECT RIGHT" as correct overturns it,
+    # even though it is the minority-support group.
+    result = llm_judge_tournament(
+        sqls, "some question", gw, judge=_fake_judge_by_sql("SELECT RIGHT")
+    )
+    assert result.winner_sql == "SELECT RIGHT"
+    assert result.n_groups == 2  # deduped: only 2 distinct result groups
+
+
+def test_tournament_tie_break_prefers_lowest_original_index():
+    """3 groups, judge ties every pairwise comparison -- every group ends at
+    the same final score, so the tie-break (same spirit as majority_vote's)
+    must pick the group containing the lowest original candidate index."""
+    gw = _FakeGateway({"SELECT A": [(1,)], "SELECT B": [(2,)], "SELECT C": [(3,)]})
+    sqls = ["SELECT C", "SELECT A", "SELECT B"]  # index 0 -> C, 1 -> A, 2 -> B
+
+    def always_tie(question, sql_a, result_a, sql_b, result_b):  # noqa: ANN001
+        return PairwiseVerdict(winner="TIE", reasoning="", raw_reply="")
+
+    result = llm_judge_tournament(sqls, "q", gw, judge=always_tie)
+    assert result.tied
+    assert result.winner_index == 0  # "SELECT C" is the lowest-index candidate
+    assert result.winner_sql == "SELECT C"
+
+
+def test_tournament_single_distinct_group_needs_no_judge_call():
+    """All candidates agree -- nothing distinct to compare, so the judge is
+    never invoked at all (0 judge calls, not 0-scored no-ops)."""
+    calls = []
+
+    def judge(question, sql_a, result_a, sql_b, result_b):  # noqa: ANN001
+        calls.append((sql_a, sql_b))
+        return PairwiseVerdict(winner="A", reasoning="", raw_reply="")
+
+    gw = _FakeGateway({"SELECT A": [(1,)]})
+    sqls = ["SELECT A", "SELECT A", "SELECT A"]
+    result = llm_judge_tournament(sqls, "q", gw, judge=judge)
+
+    assert result.n_groups == 1
+    assert result.winner_index == 0
+    assert result.winner_sql == "SELECT A"
+    assert result.verdicts == []
+    assert calls == []
+
+
+def test_tournament_empty_pool():
+    gw = _FakeGateway({})
+    result = llm_judge_tournament([], "q", gw, judge=lambda *a: PairwiseVerdict("TIE", "", ""))
+    assert result.winner_index is None
+    assert result.winner_sql is None
+    assert result.group_indices == []
+    assert not result.tied
+
+
+def test_tournament_requires_chat_or_judge():
+    gw = _FakeGateway({})
+    with pytest.raises(ValueError):
+        llm_judge_tournament(["SELECT A"], "q", gw)
+
+
+def test_tournament_judge_call_count_matches_k_choose_2():
+    """4 distinct groups -> exactly 4*3/2 = 6 pairwise judge calls."""
+    gw = _FakeGateway(
+        {"SELECT A": [(1,)], "SELECT B": [(2,)], "SELECT C": [(3,)], "SELECT D": [(4,)]}
+    )
+    sqls = ["SELECT A", "SELECT B", "SELECT C", "SELECT D"]
+    calls = []
+
+    def judge(question, sql_a, result_a, sql_b, result_b):  # noqa: ANN001
+        calls.append(1)
+        return PairwiseVerdict(winner="TIE", reasoning="", raw_reply="")
+
+    llm_judge_tournament(sqls, "q", gw, judge=judge)
+    assert len(calls) == 6
+
+
+# --------------------------------------------------------------------------- #
+# judge_pairwise: reply-parsing against a scripted ChatClient (no real chat).
+# --------------------------------------------------------------------------- #
+
+
+def test_judge_pairwise_parses_winner_and_reasoning():
+    chat = StaticChatClient("Winner: B\nReasoning: candidate B's join matches the question.")
+    verdict = judge_pairwise("q", "SELECT A", "1", "SELECT B", "2", chat=chat)
+    assert verdict.winner == "B"
+    assert "candidate B" in verdict.reasoning
+
+
+def test_judge_pairwise_unparseable_reply_falls_back_to_tie():
+    """An unparseable reply must fall back to TIE, not be silently scored as
+    a win for either side."""
+    chat = StaticChatClient("I'm not sure, this is ambiguous.")
+    verdict = judge_pairwise("q", "SELECT A", "1", "SELECT B", "2", chat=chat)
+    assert verdict.winner == "TIE"
+
+
+def test_judge_pairwise_chat_exception_falls_back_to_tie():
+    class _BoomChat:
+        def complete(self, system, user):
+            raise RuntimeError("boom")
+
+    verdict = judge_pairwise("q", "SELECT A", "1", "SELECT B", "2", chat=_BoomChat())
+    assert verdict.winner == "TIE"
+    assert "boom" in verdict.reasoning
