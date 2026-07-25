@@ -42,6 +42,12 @@ from .mistake_memory import (
     characterize_mistake,
     train_mistakes_from_run,
 )
+from .mistake_store import (
+    FeatureIndexedMistake,
+    build_feature_index,
+    extract_wrong_sql,
+    match_by_features,
+)
 from .pipeline import (
     apply_answered_clarifications_to_corpus,
     build_baseline_corpus,
@@ -58,6 +64,7 @@ __all__ = [
     "Enhancer",
     "EnhancerDecision",
     "EnhancerError",
+    "FeatureIndexedMistake",
     "HeuristicProposer",
     "LlmProposer",
     "MistakeCharacterization",
@@ -73,13 +80,16 @@ __all__ = [
     "build_curated_corpus",
     "build_curated_corpus_with_sme",
     "build_facts_corpus",
+    "build_feature_index",
     "build_mistake_memory",
     "build_mistake_note",
     "build_sme_brief",
     "characterize_mistake",
     "curate",
     "enrich_table",
+    "extract_wrong_sql",
     "load_clarifications",
+    "match_by_features",
     "profile_database",
     "review",
     "train_mistakes_from_run",

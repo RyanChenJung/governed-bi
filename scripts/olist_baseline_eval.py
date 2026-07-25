@@ -75,6 +75,18 @@ def main() -> None:
                               "scripts/olist_build_mistake_memory.py) into the corpus before "
                               "retrieval, so a similar past mistake + its fix can surface "
                               "on-match. Default 'off' (live-serve-equivalent corpus).")
+    parser.add_argument("--memory-mode", dest="memory_mode",
+                         choices=["question_text", "sql_features"], default="question_text",
+                         help="Round-8 Tk-Boost refinement: how --memory on notes are "
+                              "matched. 'question_text' (default) is Round 6's unchanged "
+                              "pre-generation BM25/embedding match on question text. "
+                              "'sql_features' instead matches the executed SQL's own "
+                              "tables/columns/keywords against the same notes' stored "
+                              "wrong-SQL features, post-execution (see "
+                              "GovernanceMiddleware._mistake_memory_feedback) — mutually "
+                              "exclusive with question_text on the same corpus (this mode "
+                              "governance-excludes the merged notes from BM25 so the two "
+                              "paths don't both fire). Ignored when --memory off.")
     args = parser.parse_args()
 
     from governed_bi.config import load_dotenv, load_settings
@@ -116,6 +128,7 @@ def main() -> None:
     corpus = load_corpus(corpus_root, schema=schema).for_analyst()
 
     enable_mistake_memory = args.memory == "on"
+    memory_mode = args.memory_mode
     if enable_mistake_memory:
         from governed_bi.corpus import Corpus, parse_asset
 
@@ -124,8 +137,23 @@ def main() -> None:
             _fail(f"--memory on but missing {memory_path}; run "
                   "scripts/olist_build_mistake_memory.py first")
         memory_notes = [parse_asset(d) for d in json.loads(memory_path.read_text())]
+        if memory_mode == "sql_features":
+            # Round 8: keep these notes OUT of Round 6's BM25/embedding question-
+            # text retrieval path (governance.excluded skips them in
+            # analyst.note_inject.select_notes_for_injection) while still leaving
+            # them present in corpus.assets, where GovernanceMiddleware's own
+            # feature index (built directly off corpus.assets, ignoring
+            # governance.excluded) picks them up. This is what makes the two
+            # modes mutually exclusive on the same merged corpus.
+            from governed_bi.corpus.schemas import Governance
+
+            memory_notes = [
+                n.model_copy(update={"governance": Governance(excluded=True)})
+                for n in memory_notes
+            ]
         corpus = Corpus(assets=[*corpus.assets, *memory_notes])
-        print(f"mistake memory: merged {len(memory_notes)} note(s) from {memory_path.name}\n")
+        print(f"mistake memory: merged {len(memory_notes)} note(s) from {memory_path.name} "
+              f"(match_mode={memory_mode})\n")
 
     chat = LangChainChatClient.from_config(models)
     embedder = LangChainEmbedder.from_config(models)
@@ -141,9 +169,11 @@ def main() -> None:
         allow_user_clarification=settings.allow_user_clarification,
         enable_result_sanity_check=sanity_check,
         enable_mistake_memory=enable_mistake_memory,
+        mistake_memory_match_mode=memory_mode,
     )
     print(f"settings.enable_result_sanity_check={sanity_check}\n")
-    print(f"settings.enable_mistake_memory={enable_mistake_memory}\n")
+    print(f"settings.enable_mistake_memory={enable_mistake_memory} "
+          f"match_mode={memory_mode}\n")
     identity = Identity(user="eval", all_access=True)
     connector = SqliteConnector(sqlite_path, schema=schema)
     gateway = Gateway(connector)
@@ -228,6 +258,7 @@ def main() -> None:
             "llm_model": models.llm_model,
             "allow_user_clarification": settings.allow_user_clarification,
             "enable_mistake_memory": enable_mistake_memory,
+            "mistake_memory_match_mode": memory_mode,
         },
     }
 

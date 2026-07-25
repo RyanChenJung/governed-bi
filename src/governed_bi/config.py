@@ -220,6 +220,20 @@ class Settings:
     # ``scripts/olist_baseline_eval.py``, never the live serve corpus.
     enable_mistake_memory: bool = False
 
+    # ── Mistake-fix memory: SQL-feature matching mode (Tk-Boost pattern; Round 8) ──
+    # Round 6's mistake memory is retrieved/injected pre-generation by matching a
+    # NEW question's TEXT against a stored mistake's question text (BM25/embedding,
+    # via ``retrieval.rvgd.retrieve``). "sql_features" is an alternative retrieval
+    # mode: after a ``run_query`` executes, the just-run SQL's tables/columns/
+    # keywords (``curator.sql_features``) are matched against the SAME mistake
+    # notes re-indexed by their stored wrong-SQL's own features
+    # (``curator.mistake_store``), and a hit is fed back as an advisory nudge on
+    # the tool result (see ``GovernanceMiddleware._mistake_memory_feedback``) —
+    # mutually exclusive with the question-text path so the two can be A/B'd on
+    # the same corpus. No-op unless ``enable_mistake_memory`` is also True.
+    # "question_text" (default) leaves Round 6's behavior completely unchanged.
+    mistake_memory_match_mode: str = "question_text"  # "question_text" | "sql_features"
+
     # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
     conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
     conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
@@ -276,6 +290,7 @@ class Settings:
         allow_user_clarification: bool | None = None,
         enable_result_sanity_check: bool | None = None,
         enable_mistake_memory: bool | None = None,
+        mistake_memory_match_mode: str | None = None,
         cors_origins: tuple[str, ...] | None = None,
         conversation_checkpointer_kind: str | None = None,
         conversation_checkpointer_path: str | None = None,
@@ -301,6 +316,8 @@ class Settings:
             base["enable_result_sanity_check"] = enable_result_sanity_check
         if enable_mistake_memory is not None:
             base["enable_mistake_memory"] = enable_mistake_memory
+        if mistake_memory_match_mode is not None:
+            base["mistake_memory_match_mode"] = mistake_memory_match_mode
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
         if conversation_checkpointer_kind is not None:

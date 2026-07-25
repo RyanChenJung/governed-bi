@@ -65,7 +65,8 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from ..corpus.schemas import TableAsset
+from ..corpus.schemas import NoteAsset, TableAsset
+from ..curator.mistake_store import build_feature_index, match_by_features
 from ..gateway import GuardrailLayer, QueryResult, check, column_allowlist
 from ..graph import build_graph, detect_missing_join_path
 from .sanity import check_assertions, format_sanity_warning
@@ -212,6 +213,20 @@ class GovernanceMiddleware(AgentMiddleware):
         }
         # L4 failed-call stubs when wrap_model_call raises before a response.
         self.failed_model_calls: list[dict[str, Any]] = []
+        # Round 8 (Tk-Boost pattern): SQL-feature-matched mistake memory, an
+        # alternative to Round 6's pre-generation question-text retrieval — see
+        # ``_mistake_memory_feedback``. Built once here (not per tool call) since
+        # the corpus's mistake notes don't change within one middleware instance;
+        # empty unless both flags opt in, so this is a true no-op otherwise.
+        self._mistake_feature_index = (
+            build_feature_index(a for a in corpus.assets if isinstance(a, NoteAsset))
+            if (
+                getattr(settings, "enable_mistake_memory", False)
+                and getattr(settings, "mistake_memory_match_mode", "question_text")
+                == "sql_features"
+            )
+            else []
+        )
 
     def wrap_model_call(self, request, handler):
         # Gotcha G1: force sequential tool calls on every model turn. Prefer
@@ -442,12 +457,14 @@ class GovernanceMiddleware(AgentMiddleware):
                     **_ledger_stamp(t0),
                 }
                 sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
+                mm_extra, mm_suffix = self._mistake_memory_feedback(action, sql, prior_ledger)
                 entry.update(sanity_extra)
+                entry.update(mm_extra)
                 return Command(
                     update={
                         "messages": [
                             ToolMessage(
-                                content=render_result(result) + message_suffix,
+                                content=render_result(result) + message_suffix + mm_suffix,
                                 tool_call_id=tcid,
                             )
                         ],
@@ -483,12 +500,14 @@ class GovernanceMiddleware(AgentMiddleware):
             **_ledger_stamp(t0),
         }
         sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
+        mm_extra, mm_suffix = self._mistake_memory_feedback(action, sql, prior_ledger)
         entry.update(sanity_extra)
+        entry.update(mm_extra)
         return Command(
             update={
                 "messages": [
                     ToolMessage(
-                        content=render_result(result) + message_suffix,
+                        content=render_result(result) + message_suffix + mm_suffix,
                         tool_call_id=tcid,
                     )
                 ],
@@ -523,6 +542,45 @@ class GovernanceMiddleware(AgentMiddleware):
         extra = {"sanity_check": {"passed": False, "assertions": assertions, "failures": failures}}
         suffix = format_sanity_warning(
             failures, attempt=prior_run_query_count + 1, cap=RUN_QUERY_CAP
+        )
+        return extra, suffix
+
+    def _mistake_memory_feedback(
+        self, action: str, sql: str, prior_ledger: list[dict]
+    ) -> tuple[dict, str]:
+        """Round 8: feature-match the just-executed ``sql`` against the mistake
+        feature index (see ``__init__``) and nudge the model if it hits.
+
+        Mirrors ``_sanity_check``'s shape (a ledger-recordable dict + an
+        advisory string appended to the tool result) but keys off SQL features
+        instead of the model's own stated assertions. No-op ``({}, "")`` when
+        the index is empty (``mistake_memory_match_mode`` isn't
+        ``"sql_features"``, or the feature isn't enabled at all) or ``action``
+        isn't ``run_query`` — a ``sample_rows`` preview has no "gold" it could
+        be wrong against.
+
+        A note already surfaced earlier THIS turn (tracked via prior ledger
+        entries' ``mistake_memory_notes``) is not repeated in the suffix text —
+        the model has already seen it — but is still recorded on this entry's
+        ledger so ``RUN_QUERY_CAP``-bounded retries can be audited end to end.
+        """
+        if action != "run_query" or not self._mistake_feature_index:
+            return {}, ""
+        matches = match_by_features(sql, self._mistake_feature_index)
+        if not matches:
+            return {}, ""
+        already_shown: set[str] = set()
+        for entry in prior_ledger:
+            already_shown.update(entry.get("mistake_memory_notes") or [])
+        extra = {"mistake_memory_notes": [m.note_id for m in matches]}
+        new_matches = [m for m in matches if m.note_id not in already_shown]
+        if not new_matches:
+            return extra, ""
+        lines = [m.body for m in new_matches]
+        suffix = (
+            "\n\n[past-mistake memory, SQL-feature-matched] a past query touching "
+            "similar tables/columns/operations was wrong; consider whether the "
+            "same fix applies to your query:\n" + "\n---\n".join(lines)
         )
         return extra, suffix
 
