@@ -1,0 +1,16 @@
+asset_type: note
+id: note_olist_active_customer
+kind: business_rule
+scope: [tbl_olist_txns, tbl_olist_accounts]
+summary: >
+  "Active customer" means an acct_uid placed an order (txns.purchased_at)
+  within the last 90 days of the dataset end date (MAX(purchased_at) from
+  txns, 2020-10-17); "churned customer" means no order in the last 180 days
+  from that same end date. Use the dataset's max purchased_at, not the
+  current wall-clock date, as the reference point.
+activation: always
+confidence: 0.9
+publication_status: draft
+audit:
+  evidence: "olist semantic_layer.md section 2 (Active & Churned Customers); dataset end date = MAX(purchased_at) = 2020-10-17"
+  provenance: { source: curator, status: draft }

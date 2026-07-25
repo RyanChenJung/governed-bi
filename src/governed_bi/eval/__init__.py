@@ -30,6 +30,7 @@ from .arms import Arm, ArmResult, Solver, agent_solver, run_arm, run_arms
 from .bird_loader import available_dbs, load_bird_items
 from .dataset import BEER_FACTORY_EVAL, BEER_FACTORY_UNANSWERABLE, EvalItem
 from .ex import execution_match
+from .olist_dataset import OLIST_EVAL
 from .refuse_gate import RefuseGateResult, agent_refuser, eval_refuse_gate
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "BEER_FACTORY_EVAL",
     "BEER_FACTORY_UNANSWERABLE",
     "EvalItem",
+    "OLIST_EVAL",
     "RefuseGateResult",
     "Solver",
     "agent_refuser",

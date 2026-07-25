@@ -1,0 +1,67 @@
+asset_type: table
+id: tbl_olist_reviews
+schema: olist
+physical_name: reviews
+columns:
+- physical_name: review_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 80e641a11e56f04c1ad469d5645fdfde
+  - 228ce5500dc1d8e020d8d1322874b6f0
+  - e64fb393e7b32834bb789ff8bb30750e
+  - f7c4243c7fe1938f181bec41a392bdeb
+  - 15197aa66ff4d0650b5434f1b46cda19
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txn_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - a548910a1c6147796b98fdf73dbeba33
+  - f9e4b658b201a9f2ecdecbb34bed034b
+  - 658677c97b385a9be170737859d3511b
+  - 8e6bfb81e283fa7e4f11123a3fb894f1
+  - b18dcdf73be66366873cd26c5724d1dc
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: rating
+  physical_type: INT
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5
+  - 5
+  - 5
+  - 5
+  - 0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: created_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-03-10 00:00:00'
+  - '2020-02-17 00:00:00'
+  - '2019-04-21 00:00:00'
+  - '2020-03-01 00:00:00'
+  - '2020-04-13 00:00:00'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

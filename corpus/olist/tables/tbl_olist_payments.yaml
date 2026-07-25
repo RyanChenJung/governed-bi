@@ -1,0 +1,97 @@
+asset_type: table
+id: tbl_olist_payments
+schema: olist
+physical_name: payments
+columns:
+- physical_name: txn_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - b81ef226f3fe1789b1e8b2acac839d17
+  - a9810da82917af2d9aefd1278f1dcfa0
+  - 42fdf880ba16b47b59251dd489d4441a
+  - 298fcdf1f73eb413e4d26d01b25bc1cd
+  - 771ee386b001f06208a7419e4fc1bbd7
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: pay_seq
+  physical_type: INT
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: method
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - credit_card
+  - credit_card
+  - credit_card
+  - credit_card
+  - credit_card
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: installments
+  physical_type: INT
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 8
+  - 1
+  - 2
+  - 2
+  - 1
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: amount
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 99.33
+  - 24.39
+  - 128.45
+  - 96.12
+  - 81.16
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: processor_ref
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - pi_e3dda91f208f1c8c
+  - pi_902f90f7bbb2e39a
+  - pi_d5b1916a29760978
+  - pi_be084b8a1aa2aa21
+  - pi_43771f8a72557a36
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

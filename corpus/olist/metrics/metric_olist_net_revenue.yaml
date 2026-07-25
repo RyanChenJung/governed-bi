@@ -1,0 +1,13 @@
+asset_type: metric
+id: metric_olist_net_revenue
+name: net_revenue
+base_table: tbl_olist_payments
+expression: SUM(payments.amount) WHERE txns.rma_flag != 3
+dimensions: []
+rules:
+  - kind: filter
+    note: "join payments to txns on txn_id and exclude rows where txns.rma_flag = 3 (return completed / refunded); rma_flag 1 (return requested) and 2 (return approved) are NOT excluded, only 3"
+confidence: 0.9
+audit:
+  evidence: "olist semantic_layer.md section 4 (Net Revenue) and section 5 (rma_flag semantics: 0=no return, 1=requested, 2=approved, 3=completed/refunded)"
+  provenance: { source: curator, status: draft }

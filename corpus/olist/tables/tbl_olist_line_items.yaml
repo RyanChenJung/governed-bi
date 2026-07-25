@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_olist_line_items
+schema: olist
+physical_name: line_items
+columns:
+- physical_name: txn_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 00010242fe8c5a6d1ba2dd792cb16214
+  - 00018f77f2f0320c557190d7a144bdd3
+  - 000229ec398224ef6ca0657da4fc703e
+  - 00042b26cf59d7ce69dfabb4e55b4fd9
+  - 00048cc3ae777c65dbb7d2a0634bc1ea
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: line_seq
+  physical_type: INT
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: item_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 4244733e06e7ecb4970a6e2683c13e61
+  - e5f2d52b802189ee658865ca93d83a8f
+  - c777355d18b72b67abbeef9df44fd0fd
+  - ac6c3623068f30de03045865e4e10089
+  - ef92defde845ab8450f9d70c526ef70f
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendor_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 48436dade18ac8b2bce089ec2a041202
+  - dd7ddc04e1b6c2c614352b383efe2d36
+  - 5b51032eddd242adc84c38acab88f23d
+  - df560393f3a51e74553ab94004ba5c87
+  - 6426d21aca402a131fc0a5d0960a3c90
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: ship_by
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2019-09-19 09:45:35'
+  - '2019-05-03 11:05:13'
+  - '2020-01-18 14:48:30'
+  - '2019-02-13 13:57:51'
+  - '2019-05-23 03:55:27'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: unit_price
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 58.9
+  - 239.9
+  - 199.0
+  - 199.9
+  - 21.9
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: freight
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 13.29
+  - 19.93
+  - 17.87
+  - 18.14
+  - 12.69
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: discount
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: tax
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5.62
+  - 16.12
+  - 12.27
+  - 16.45
+  - 1.29
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: cogs
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 32.4
+  - 177.53
+  - 131.34
+  - 145.93
+  - 15.99
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: disc_code
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - WELCOME10
+  - null
+  - null
+  - WELCOME10
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false
