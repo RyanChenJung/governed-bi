@@ -89,6 +89,31 @@ def test_ex_empty_prediction_is_not_a_match(gateway):
     assert not execution_match("", "SELECT 1", gateway)
 
 
+def test_ex_numeric_tolerance_absorbs_rounding_noise(gateway):
+    # Round-0.5: a semantically-correct query that skips a gold ROUND(...) call
+    # (e.g. AVG returning 4.087718... vs gold's ROUND(AVG(...), 2) = 4.09) is
+    # not a reasoning failure and must not score as wrong_result.
+    assert execution_match(
+        "SELECT 4.087718 AS avg_rating",
+        "SELECT ROUND(4.087718, 2) AS avg_rating",
+        gateway,
+    )
+
+
+def test_ex_numeric_tolerance_still_rejects_real_differences(gateway):
+    # A genuine mismatch at the same precision must still fail.
+    assert not execution_match(
+        "SELECT 4.10 AS avg_rating",
+        "SELECT 4.09 AS avg_rating",
+        gateway,
+    )
+
+
+def test_ex_string_columns_stay_exact(gateway):
+    # Tolerance only applies to numeric columns; string differences still count.
+    assert not execution_match("SELECT 'foo'", "SELECT 'bar'", gateway)
+
+
 # --------------------------------------------------------------------------- #
 # Arm harness
 # --------------------------------------------------------------------------- #

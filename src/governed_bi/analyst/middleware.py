@@ -13,6 +13,7 @@ entry, single DB round-trip).
 from __future__ import annotations
 
 import operator
+import re
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any
@@ -305,6 +306,8 @@ class GovernanceMiddleware(AgentMiddleware):
         licensed_ids = list(request.state.get("licensed") or [])
         prior_ledger = list(request.state.get("ledger") or [])
 
+        raw = None  # only meaningful for run_query; guards the dialect-repair path below
+        repair_dialect = None  # set if _dialect_aware_transpile had to try a foreign dialect
         if name == "sample_rows":
             sql, err = self._sample_sql(args, licensed_ids)
             if err is not None:
@@ -325,12 +328,7 @@ class GovernanceMiddleware(AgentMiddleware):
             action = "sample_rows"
         else:
             raw = args.get("sql") or ""
-            try:
-                sql = sqlglot.transpile(
-                    raw, read=self._dialect, write=self._dialect, identify=True
-                )[0]
-            except Exception:
-                sql = raw
+            sql, repair_dialect = self._dialect_aware_transpile(raw)
             action = "run_query"
             # Attempt cap only for run_query (ADR Q6)
             prior = sum(1 for e in prior_ledger if e.get("action") == "run_query")
@@ -414,6 +412,41 @@ class GovernanceMiddleware(AgentMiddleware):
         try:
             result = self._gateway.execute(sql, self._identity)
         except Exception as err:
+            # Dialect-mismatch repair (Round-0.5): the model sometimes emits a
+            # function from a dialect it knows better than the connector's own
+            # (e.g. T-SQL/Snowflake-style DATEDIFF(unit, start, end), Postgres/
+            # Oracle-style TO_CHAR(date, fmt)) — sqlglot silently passes those
+            # through unchanged when read==write==self._dialect (it has no other
+            # dialect to translate *from*), so the connector rejects them at
+            # execution time even though the underlying logic is sound. Retry by
+            # re-transpiling the model's raw SQL as if it were each of a few
+            # common source dialects and re-running governance + execution; keep
+            # the first repair that both passes check() and executes cleanly.
+            repaired = (
+                self._repair_dialect_mismatch(raw, allowed_tables=allowed_tables)
+                if action == "run_query" and raw
+                else None
+            )
+            if repaired is not None:
+                sql, result, repair_dialect = repaired
+                entry = {
+                    "action": action,
+                    "verdict": "pass",
+                    "sql": sql,
+                    "allowed": sorted(allowed_tables),
+                    "licensed_ids": sorted(licensed_ids),
+                    "result": serialize_result(result),
+                    "dialect_repair": repair_dialect,
+                    **_ledger_stamp(t0),
+                }
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(content=render_result(result), tool_call_id=tcid)
+                        ],
+                        "ledger": [entry],
+                    }
+                )
             entry = {
                 "action": action,
                 "verdict": "error",
@@ -439,6 +472,7 @@ class GovernanceMiddleware(AgentMiddleware):
             "allowed": sorted(allowed_tables),
             "licensed_ids": sorted(licensed_ids),
             "result": serialize_result(result),
+            **({"dialect_repair": repair_dialect} if repair_dialect else {}),
             **_ledger_stamp(t0),
         }
         return Command(
@@ -449,6 +483,93 @@ class GovernanceMiddleware(AgentMiddleware):
                 "ledger": [entry],
             }
         )
+
+    # Foreign-dialect source guesses to retry a run_query against on execution
+    # failure (Round-0.5). Not exhaustive — covers the dialects whose function
+    # signatures diverge most from SQLite/ANSI (T-SQL/Snowflake 3-arg DATEDIFF,
+    # Postgres/Oracle format-string TO_CHAR) and that models trained on a mix of
+    # SQL dialects reach for by habit.
+    _DIALECT_REPAIR_CANDIDATES = ("tsql", "postgres", "snowflake", "mysql", "oracle")
+
+    # Recognizes the two Round-0.5 dialect-mismatch shapes at the raw-SQL level,
+    # before parsing: a T-SQL/Snowflake-style 3-arg DATEDIFF(unit, start, end) —
+    # SQLite's own dialect has no such form (its DATEDIFF, if any, is 2-arg), so
+    # reading it as SQLite mis-slots the unit keyword as a date argument and
+    # silently drops the real end-date argument (no warning at all, just a wrong
+    # answer) — and a Postgres/Oracle-style TO_CHAR(date, format), which SQLite
+    # has no builtin for. Scoped to exactly these two known patterns rather than
+    # a fully general cross-dialect detector: sqlglot's own unsupported-argument
+    # warnings are not a reliable signal here (they both under-fire — silent
+    # DATEDIFF arg-dropping raises nothing — and over-fire — a benign DATEDIFF
+    # unit-annotation warning on an otherwise-correct transpile), so pattern
+    # matching on the two confirmed failure modes is the more robust choice
+    # available in this scope. Each maps to the dialect whose reader parses that
+    # specific call shape correctly (checked empirically against sqlglot).
+    _DATEDIFF_3ARG_RE = re.compile(
+        r"\bDATEDIFF\s*\(\s*['\"]?(day|month|year|quarter|week|hour|minute|second)['\"]?\s*,",
+        re.IGNORECASE,
+    )
+    _TO_CHAR_FMT_RE = re.compile(r"\bTO_CHAR\s*\(\s*[^,]+,\s*['\"]", re.IGNORECASE)
+
+    def _dialect_aware_transpile(self, raw_sql: str) -> tuple[str, str | None]:
+        """Normalize ``raw_sql`` to the connector's dialect. If it matches one of
+        the two known dialect-mismatch shapes above, parse it as the dialect that
+        actually understands that call shape (still writing out to
+        ``self._dialect``) instead of ``self._dialect`` itself, so the model's
+        semantically-sound SQL survives instead of being silently mangled.
+
+        Returns ``(sql, repair_dialect)`` — ``repair_dialect`` is ``None`` when
+        no known mismatch pattern matched (the common case: read as
+        ``self._dialect`` directly, same as before Round-0.5). Never raises: a
+        transpile failure on the chosen read-dialect falls back to ``raw_sql``
+        unchanged, same as the prior behavior.
+        """
+        if self._DATEDIFF_3ARG_RE.search(raw_sql):
+            read, repair_dialect = "tsql", "tsql"
+        elif self._TO_CHAR_FMT_RE.search(raw_sql):
+            read, repair_dialect = "postgres", "postgres"
+        else:
+            read, repair_dialect = self._dialect, None
+        try:
+            return sqlglot.transpile(raw_sql, read=read, write=self._dialect, identify=True)[0], repair_dialect
+        except Exception:
+            return raw_sql, None
+
+    def _repair_dialect_mismatch(
+        self, raw_sql: str, *, allowed_tables: set
+    ) -> tuple[str, "QueryResult", str] | None:
+        """Best-effort recovery when ``raw_sql`` fails to execute as-is: re-parse it
+        under each of ``_DIALECT_REPAIR_CANDIDATES`` and transpile to the
+        connector's real dialect, re-run governance ``check()`` (never skip it —
+        Inv #2/#3 apply to repaired SQL too), and return the first candidate that
+        both passes and executes. ``None`` if no candidate helps.
+        """
+        for candidate in self._DIALECT_REPAIR_CANDIDATES:
+            if candidate == self._dialect:
+                continue
+            try:
+                repaired_sql = sqlglot.transpile(
+                    raw_sql, read=candidate, write=self._dialect, identify=True
+                )[0]
+            except Exception:
+                continue
+            verdict = check(
+                repaired_sql,
+                allowed_columns=set(self._allowlist.allowed),
+                suspect_columns=self._allowlist.suspect,
+                allowed_tables=frozenset(allowed_tables),
+                hard_block_suspect=self._settings.hard_block_suspect_columns,
+                dialect=self._dialect,
+                default_schema=self._default,
+            )
+            if not verdict.passed:
+                continue
+            try:
+                result = self._gateway.execute(repaired_sql, self._identity)
+            except Exception:
+                continue
+            return repaired_sql, result, candidate
+        return None
 
     def _sample_sql(
         self, args: dict, licensed_ids: list

@@ -72,6 +72,28 @@ def test_middleware_pass_and_ledger(corpus, bird_gateway, settings, identity):
     assert final["ledger"][-1]["action"] == "run_query"
 
 
+def test_middleware_repairs_foreign_dialect_function(corpus, bird_gateway, settings, identity):
+    # Round-0.5: the model emits a Postgres/Oracle-style TO_CHAR(date, format),
+    # which SQLite has no builtin for ("no such function: TO_CHAR"). The
+    # dialect-repair path should retry it as a foreign dialect and recover.
+    turns = [
+        ai_tool_turn(
+            "run_query",
+            {"sql": "SELECT TO_CHAR('2024-01-15', 'YYYY-MM') AS ym"},
+            "c1",
+        ),
+        AIMessage(content="done"),
+    ]
+    agent = _agent(corpus, bird_gateway, identity, settings, turns)
+    final = agent.invoke({"messages": [HumanMessage("month")], "licensed": [], "ledger": []})
+    entry = final["ledger"][-1]
+    assert entry["action"] == "run_query"
+    assert entry["verdict"] == "pass"
+    assert entry.get("dialect_repair")
+    texts = " ".join(str(getattr(m, "content", "")) for m in final["messages"])
+    assert "2024-01" in texts
+
+
 def test_middleware_blocks_off_scope_table(corpus, bird_gateway, settings, identity):
     # Inspect transaction only; query an unlicensed table → L4 block (coachable).
     turns = [
