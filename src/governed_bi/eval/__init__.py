@@ -38,9 +38,10 @@ from .candidates import (
     pool_hits,
 )
 from .dataset import BEER_FACTORY_EVAL, BEER_FACTORY_UNANSWERABLE, EvalItem
-from .ex import execution_match
+from .ex import execution_match, normalized_result
 from .olist_dataset import OLIST_EVAL
 from .refuse_gate import RefuseGateResult, agent_refuser, eval_refuse_gate
+from .select import MajorityVoteResult, majority_vote
 
 __all__ = [
     "Arm",
@@ -50,6 +51,7 @@ __all__ = [
     "Candidate",
     "CandidatePool",
     "EvalItem",
+    "MajorityVoteResult",
     "OLIST_EVAL",
     "PROMPT_STYLES",
     "RefuseGateResult",
@@ -62,6 +64,8 @@ __all__ = [
     "generate_pool_for_question",
     "generate_pools",
     "load_bird_items",
+    "majority_vote",
+    "normalized_result",
     "pass_at_k",
     "pool_hits",
     "run_arm",

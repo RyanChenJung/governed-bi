@@ -54,3 +54,21 @@ def execution_match(pred_sql: str, gold_sql: str, gateway: "Gateway") -> bool:
         return _result_set(pred_sql, gateway) == _result_set(gold_sql, gateway)
     except Exception:
         return False
+
+
+def normalized_result(sql: str | None, gateway: "Gateway") -> frozenset[tuple] | None:
+    """Execute ``sql`` and return its tolerance-normalized result set (the same
+    set :func:`execution_match` compares), or ``None`` if ``sql`` is empty or
+    fails to execute.
+
+    Exposed so callers that need to *group* candidates by result-equivalence
+    (Round-3 majority-vote selection, ``eval.select``) can reuse the exact
+    same normalization/comparison semantics as ``execution_match`` instead of
+    re-deriving their own equality check.
+    """
+    if not sql:
+        return None
+    try:
+        return _result_set(sql, gateway)
+    except Exception:
+        return None
