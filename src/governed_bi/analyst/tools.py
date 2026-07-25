@@ -489,10 +489,26 @@ def make_tools(
         )
 
     @tool
-    def run_query(sql: str) -> str:
+    def run_query(sql: str, assertions: list[dict[str, Any]] | None = None) -> str:
         """Execute a read-only SELECT. Guardrailed + audited by middleware.
 
         Only use identifiers from tables you have inspected. If BLOCKED, fix and retry.
+
+        ``assertions`` (optional, 0-3 items): short, structured sanity checks on
+        the SHAPE of the result you expect — a single-candidate check with no
+        gold answer, so keep it to things you're confident about, never fussy
+        style checks. Each item is a dict with a ``"kind"`` key:
+
+        - ``{"kind": "not_empty"}`` — the question implies at least one row exists.
+        - ``{"kind": "row_count_min", "value": N}`` / ``{"kind": "row_count_max", "value": N}``
+          — a plausible bound on row count (e.g. at most the number of customers).
+        - ``{"kind": "non_negative", "column": "<name>"}`` — that column (by the
+          alias/name you used in SELECT) can never be negative (a count, a price).
+        - ``{"kind": "non_null", "column": "<name>"}`` — that column should never be null.
+
+        Only include an assertion when a violation would be a CLEAR bug (wrong
+        sign, wrong aggregation level, empty result on a question that plainly
+        has an answer) — omit ``assertions`` entirely rather than force one.
         """
         raise RuntimeError(
             "run_query must be intercepted by GovernanceMiddleware (Inv #2)"

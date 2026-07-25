@@ -229,6 +229,14 @@ def agent_solver(
                 "usage": prov.get("token_sum") or prov.get("usage"),
                 "turn_id": prov.get("turn_id"),
                 "run_id": prov.get("run_id"),
+                # Round-1 CHESS Unit Tester: every run_query ledger entry's
+                # sanity_check verdict (empty list when the feature is off or no
+                # entry carried assertions), for per-question A/B reporting.
+                "sanity_checks": [
+                    e["sanity_check"]
+                    for e in (prov.get("governance_ledger") or [])
+                    if e.get("action") == "run_query" and "sanity_check" in e
+                ],
             }
             return answer.sql, meta
 

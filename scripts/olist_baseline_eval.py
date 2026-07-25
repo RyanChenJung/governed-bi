@@ -64,6 +64,11 @@ def main() -> None:
     parser.add_argument("--ids", type=str, default=None,
                          help="comma-separated question_ids to rerun (e.g. after a "
                               "network blip cut a full run short partway through)")
+    parser.add_argument("--sanity-check", dest="sanity_check", choices=["on", "off"],
+                         default=None,
+                         help="override settings.enable_result_sanity_check (Round-1 "
+                              "CHESS Unit Tester assertions) for this run; omit to use "
+                              "whatever governed_bi.toml/.local.toml already say")
     args = parser.parse_args()
 
     from governed_bi.config import load_dotenv, load_settings
@@ -108,12 +113,17 @@ def main() -> None:
     embedder = LangChainEmbedder.from_config(models)
     model = chat.model
 
+    sanity_check = settings.enable_result_sanity_check
+    if args.sanity_check is not None:
+        sanity_check = args.sanity_check == "on"
     eval_settings = Settings.for_env(
         Environment.dev,
         models=models,
         datasource=settings.datasource,
         allow_user_clarification=settings.allow_user_clarification,
+        enable_result_sanity_check=sanity_check,
     )
+    print(f"settings.enable_result_sanity_check={sanity_check}\n")
     identity = Identity(user="eval", all_access=True)
     connector = SqliteConnector(sqlite_path, schema=schema)
     gateway = Gateway(connector)

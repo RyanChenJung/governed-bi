@@ -68,6 +68,7 @@ from langgraph.types import Command
 from ..corpus.schemas import TableAsset
 from ..gateway import GuardrailLayer, QueryResult, check, column_allowlist
 from ..graph import build_graph, detect_missing_join_path
+from .sanity import check_assertions, format_sanity_warning
 from .tools import render_result
 
 if TYPE_CHECKING:
@@ -308,6 +309,7 @@ class GovernanceMiddleware(AgentMiddleware):
 
         raw = None  # only meaningful for run_query; guards the dialect-repair path below
         repair_dialect = None  # set if _dialect_aware_transpile had to try a foreign dialect
+        prior = 0  # run_query attempt count so far; only meaningful for run_query below
         if name == "sample_rows":
             sql, err = self._sample_sql(args, licensed_ids)
             if err is not None:
@@ -439,10 +441,15 @@ class GovernanceMiddleware(AgentMiddleware):
                     "dialect_repair": repair_dialect,
                     **_ledger_stamp(t0),
                 }
+                sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
+                entry.update(sanity_extra)
                 return Command(
                     update={
                         "messages": [
-                            ToolMessage(content=render_result(result), tool_call_id=tcid)
+                            ToolMessage(
+                                content=render_result(result) + message_suffix,
+                                tool_call_id=tcid,
+                            )
                         ],
                         "ledger": [entry],
                     }
@@ -475,14 +482,49 @@ class GovernanceMiddleware(AgentMiddleware):
             **({"dialect_repair": repair_dialect} if repair_dialect else {}),
             **_ledger_stamp(t0),
         }
+        sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
+        entry.update(sanity_extra)
         return Command(
             update={
                 "messages": [
-                    ToolMessage(content=render_result(result), tool_call_id=tcid)
+                    ToolMessage(
+                        content=render_result(result) + message_suffix,
+                        tool_call_id=tcid,
+                    )
                 ],
                 "ledger": [entry],
             }
         )
+
+    def _sanity_check(
+        self, action: str, args: dict, result: QueryResult, prior_run_query_count: int
+    ) -> tuple[dict, str]:
+        """Round-1 "Unit Tester" pattern: re-check the model's own ``assertions``
+        (see ``analyst.tools.run_query``) against the just-executed ``result``.
+
+        Advisory only (round brief step 3 — a false positive here is as costly
+        as a miss): never changes ``verdict`` away from ``"pass"`` or withholds
+        the real result. A failure is (a) recorded on the ledger for audit/A-B
+        analysis and (b) appended to the tool message as a nudge the model may
+        act on by retrying — reusing the existing ``run_query`` attempt count
+        (``RUN_QUERY_CAP``) rather than a separate cap, since the ledger entry
+        this augments already counts toward it. Returns ``({}, "")`` (no-op)
+        when the feature is off, the action isn't ``run_query``, or no
+        assertions were given.
+        """
+        if action != "run_query" or not getattr(self._settings, "enable_result_sanity_check", False):
+            return {}, ""
+        assertions = args.get("assertions")
+        if not assertions:
+            return {}, ""
+        failures = check_assertions(assertions, result)
+        if not failures:
+            return {"sanity_check": {"passed": True, "assertions": assertions}}, ""
+        extra = {"sanity_check": {"passed": False, "assertions": assertions, "failures": failures}}
+        suffix = format_sanity_warning(
+            failures, attempt=prior_run_query_count + 1, cap=RUN_QUERY_CAP
+        )
+        return extra, suffix
 
     # Foreign-dialect source guesses to retry a run_query against on execution
     # failure (Round-0.5). Not exhaustive — covers the dialects whose function

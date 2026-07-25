@@ -202,6 +202,14 @@ class Settings:
     allow_user_clarification: bool = False
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
 
+    # ── Result sanity check (CHESS "Unit Tester" pattern; Round 1) ──
+    # When True, ``run_query`` accepts optional structured ``assertions`` about
+    # the expected result shape (row count / sign / null-ness); a failed
+    # assertion is fed back as an advisory nudge into the existing
+    # ``RUN_QUERY_CAP`` retry loop (see ``GovernanceMiddleware._sanity_check``).
+    # Default False: without config, behavior is unchanged from before Round 1.
+    enable_result_sanity_check: bool = False
+
     # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
     conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
     conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
@@ -256,6 +264,7 @@ class Settings:
         can_stream: bool | None = None,
         allow_edit: bool | None = None,
         allow_user_clarification: bool | None = None,
+        enable_result_sanity_check: bool | None = None,
         cors_origins: tuple[str, ...] | None = None,
         conversation_checkpointer_kind: str | None = None,
         conversation_checkpointer_path: str | None = None,
@@ -277,6 +286,8 @@ class Settings:
             base["allow_edit"] = allow_edit
         if allow_user_clarification is not None:
             base["allow_user_clarification"] = allow_user_clarification
+        if enable_result_sanity_check is not None:
+            base["enable_result_sanity_check"] = enable_result_sanity_check
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
         if conversation_checkpointer_kind is not None:
@@ -470,6 +481,11 @@ def load_settings(
     allow_user_clarification = (
         bool(serve["allow_user_clarification"]) if "allow_user_clarification" in serve else None
     )
+    enable_result_sanity_check = (
+        bool(serve["enable_result_sanity_check"])
+        if "enable_result_sanity_check" in serve
+        else None
+    )
     cors_origins = (
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
@@ -492,6 +508,7 @@ def load_settings(
         can_stream=can_stream,
         allow_edit=allow_edit,
         allow_user_clarification=allow_user_clarification,
+        enable_result_sanity_check=enable_result_sanity_check,
         cors_origins=cors_origins,
         conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
         conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,
