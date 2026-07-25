@@ -69,6 +69,12 @@ def main() -> None:
                          help="override settings.enable_result_sanity_check (Round-1 "
                               "CHESS Unit Tester assertions) for this run; omit to use "
                               "whatever governed_bi.toml/.local.toml already say")
+    parser.add_argument("--memory", dest="memory", choices=["on", "off"], default="off",
+                         help="Round-6 Memo-SQL-pattern mistake memory: 'on' merges "
+                              "runs/mistake_memory_olist.json (built by "
+                              "scripts/olist_build_mistake_memory.py) into the corpus before "
+                              "retrieval, so a similar past mistake + its fix can surface "
+                              "on-match. Default 'off' (live-serve-equivalent corpus).")
     args = parser.parse_args()
 
     from governed_bi.config import load_dotenv, load_settings
@@ -109,6 +115,18 @@ def main() -> None:
     corpus_root = REPO_ROOT / "corpus"
     corpus = load_corpus(corpus_root, schema=schema).for_analyst()
 
+    enable_mistake_memory = args.memory == "on"
+    if enable_mistake_memory:
+        from governed_bi.corpus import Corpus, parse_asset
+
+        memory_path = REPO_ROOT / "runs" / "mistake_memory_olist.json"
+        if not memory_path.is_file():
+            _fail(f"--memory on but missing {memory_path}; run "
+                  "scripts/olist_build_mistake_memory.py first")
+        memory_notes = [parse_asset(d) for d in json.loads(memory_path.read_text())]
+        corpus = Corpus(assets=[*corpus.assets, *memory_notes])
+        print(f"mistake memory: merged {len(memory_notes)} note(s) from {memory_path.name}\n")
+
     chat = LangChainChatClient.from_config(models)
     embedder = LangChainEmbedder.from_config(models)
     model = chat.model
@@ -122,8 +140,10 @@ def main() -> None:
         datasource=settings.datasource,
         allow_user_clarification=settings.allow_user_clarification,
         enable_result_sanity_check=sanity_check,
+        enable_mistake_memory=enable_mistake_memory,
     )
     print(f"settings.enable_result_sanity_check={sanity_check}\n")
+    print(f"settings.enable_mistake_memory={enable_mistake_memory}\n")
     identity = Identity(user="eval", all_access=True)
     connector = SqliteConnector(sqlite_path, schema=schema)
     gateway = Gateway(connector)
@@ -207,6 +227,7 @@ def main() -> None:
             "provider": models.provider,
             "llm_model": models.llm_model,
             "allow_user_clarification": settings.allow_user_clarification,
+            "enable_mistake_memory": enable_mistake_memory,
         },
     }
 

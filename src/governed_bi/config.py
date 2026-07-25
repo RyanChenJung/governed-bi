@@ -210,6 +210,16 @@ class Settings:
     # Default False: without config, behavior is unchanged from before Round 1.
     enable_result_sanity_check: bool = False
 
+    # ── Mistake-fix memory (Memo-SQL pattern; Round 6) ──
+    # When True, an eval/serve caller may merge retrieved past-mistake
+    # ``NoteAsset``s (kind=gotchas, built offline from observed wrong-SQL vs
+    # gold-SQL pairs — see ``curator.mistake_memory``) into the corpus before
+    # retrieval, so a similar prior mistake + its fix surfaces on-match in the
+    # Analyst prompt. Default False: without config, retrieval/serve behavior
+    # is unchanged — this only gates the eval harness's opt-in corpus merge in
+    # ``scripts/olist_baseline_eval.py``, never the live serve corpus.
+    enable_mistake_memory: bool = False
+
     # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
     conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
     conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
@@ -265,6 +275,7 @@ class Settings:
         allow_edit: bool | None = None,
         allow_user_clarification: bool | None = None,
         enable_result_sanity_check: bool | None = None,
+        enable_mistake_memory: bool | None = None,
         cors_origins: tuple[str, ...] | None = None,
         conversation_checkpointer_kind: str | None = None,
         conversation_checkpointer_path: str | None = None,
@@ -288,6 +299,8 @@ class Settings:
             base["allow_user_clarification"] = allow_user_clarification
         if enable_result_sanity_check is not None:
             base["enable_result_sanity_check"] = enable_result_sanity_check
+        if enable_mistake_memory is not None:
+            base["enable_mistake_memory"] = enable_mistake_memory
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
         if conversation_checkpointer_kind is not None:
@@ -486,6 +499,9 @@ def load_settings(
         if "enable_result_sanity_check" in serve
         else None
     )
+    enable_mistake_memory = (
+        bool(serve["enable_mistake_memory"]) if "enable_mistake_memory" in serve else None
+    )
     cors_origins = (
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
@@ -509,6 +525,7 @@ def load_settings(
         allow_edit=allow_edit,
         allow_user_clarification=allow_user_clarification,
         enable_result_sanity_check=enable_result_sanity_check,
+        enable_mistake_memory=enable_mistake_memory,
         cors_origins=cors_origins,
         conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
         conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,

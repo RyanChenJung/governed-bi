@@ -33,6 +33,15 @@ from .enhancer import Enhancer, EnhancerDecision, EnhancerError
 from .enrich import enrich_table
 from .llm_proposer import LlmProposer
 from .loop import CurationResult, curate
+from .mistake_memory import (
+    MistakeCharacterization,
+    MistakeInput,
+    MistakeMemoryError,
+    build_mistake_memory,
+    build_mistake_note,
+    characterize_mistake,
+    train_mistakes_from_run,
+)
 from .pipeline import (
     apply_answered_clarifications_to_corpus,
     build_baseline_corpus,
@@ -51,6 +60,9 @@ __all__ = [
     "EnhancerError",
     "HeuristicProposer",
     "LlmProposer",
+    "MistakeCharacterization",
+    "MistakeInput",
+    "MistakeMemoryError",
     "Proposer",
     "Responder",
     "SimulatedSme",
@@ -61,12 +73,16 @@ __all__ = [
     "build_curated_corpus",
     "build_curated_corpus_with_sme",
     "build_facts_corpus",
+    "build_mistake_memory",
+    "build_mistake_note",
     "build_sme_brief",
+    "characterize_mistake",
     "curate",
     "enrich_table",
     "load_clarifications",
     "profile_database",
     "review",
+    "train_mistakes_from_run",
     "upsert_clarification_record",
     "write_clarifications",
 ]
