@@ -327,6 +327,7 @@ def build_serve_rails(
     n_human: int = 1,
     corpus_root: "Path | None" = None,
     enhancer_chat_model: Any | None = None,
+    system_prompt_suffix: str | None = None,
 ):
     """Compile the outer deterministic StateGraph wrapping the agent core.
 
@@ -342,6 +343,12 @@ def build_serve_rails(
     inject a distinct fake/stub model for the Enhancer's fold call, so it is
     verifiably NOT the same instance as ``model`` (the main-turn model) without
     making a real Enhancer call hit a live provider.
+
+    ``system_prompt_suffix``, when given, is appended to the assembled system
+    prompt (default SYSTEM_PROMPT + governed context + current time) before the
+    agent core is built. Eval-only knob (Round-2 candidate-pool prompt-style
+    diversity, ``eval/candidates.py``) — ``None`` (the default) leaves the
+    live-serve prompt byte-for-byte unchanged.
     """
     # Bare references resolve to the serving schema (the SQLite ATTACH alias, or the
     # pinned Postgres schema); None means the source spans every schema, so a bare
@@ -748,6 +755,8 @@ def build_serve_rails(
             f"The current date and time is {now_local.strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)')} "
             f"(the user's local time). Resolve any relative dates in the question against it."
         )
+        if system_prompt_suffix:
+            system_prompt = f"{system_prompt}\n\n{system_prompt_suffix}"
 
         clarify_on = clarify_checkpointer is not None
         agent = build_agent_core(

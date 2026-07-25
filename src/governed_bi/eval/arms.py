@@ -154,6 +154,7 @@ def agent_solver(
     embedder=None,
     session_id: str = "eval",
     enable_run_log: bool = False,
+    system_prompt_suffix: str | None = None,
 ) -> MetaSolver:
     """A :class:`MetaSolver` that drives the ADR-0002 agentic serve core.
 
@@ -173,6 +174,10 @@ def agent_solver(
     Portable run logging is forced off here: eval metrics live in the returned
     ``meta`` / experiment rows. Opt in by passing settings with ``run_log_kind``
     already set to a non-default destination via ``enable_run_log=True``.
+
+    ``system_prompt_suffix``, when given, is forwarded to ``build_serve_rails``
+    (Round-2 candidate-pool prompt-style diversity, ``eval/candidates.py``);
+    ``None`` (the default) leaves every existing caller's prompt unchanged.
     """
     from dataclasses import replace as dc_replace
 
@@ -192,6 +197,7 @@ def agent_solver(
         model=model,
         embedder=embedder,
         session_id=session_id,
+        system_prompt_suffix=system_prompt_suffix,
     )
 
     class _AgentSolver:

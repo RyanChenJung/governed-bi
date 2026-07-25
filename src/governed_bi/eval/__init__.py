@@ -28,6 +28,15 @@ from __future__ import annotations
 
 from .arms import Arm, ArmResult, Solver, agent_solver, run_arm, run_arms
 from .bird_loader import available_dbs, load_bird_items
+from .candidates import (
+    PROMPT_STYLES,
+    Candidate,
+    CandidatePool,
+    generate_pool_for_question,
+    generate_pools,
+    pass_at_k,
+    pool_hits,
+)
 from .dataset import BEER_FACTORY_EVAL, BEER_FACTORY_UNANSWERABLE, EvalItem
 from .ex import execution_match
 from .olist_dataset import OLIST_EVAL
@@ -38,8 +47,11 @@ __all__ = [
     "ArmResult",
     "BEER_FACTORY_EVAL",
     "BEER_FACTORY_UNANSWERABLE",
+    "Candidate",
+    "CandidatePool",
     "EvalItem",
     "OLIST_EVAL",
+    "PROMPT_STYLES",
     "RefuseGateResult",
     "Solver",
     "agent_refuser",
@@ -47,7 +59,11 @@ __all__ = [
     "available_dbs",
     "eval_refuse_gate",
     "execution_match",
+    "generate_pool_for_question",
+    "generate_pools",
     "load_bird_items",
+    "pass_at_k",
+    "pool_hits",
     "run_arm",
     "run_arms",
 ]

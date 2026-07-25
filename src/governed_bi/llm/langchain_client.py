@@ -132,6 +132,23 @@ class LangChainChatClient:
         return _message_text(message)
 
 
+def bind_temperature(model: Any, temperature: float) -> Any:
+    """Return a temperature-varied view of a LangChain chat model.
+
+    LangChain chat models accept generation kwargs at bind-time via
+    ``.bind(...)``, which returns a ``RunnableBinding`` wrapping the original
+    model — no re-construction (no re-resolving credentials/region/etc.) is
+    needed to get a second, differently-configured "instance". This is safe to
+    chain: ``build_agent_core`` layers its own ``.bind(parallel_tool_calls=False)``
+    on top for Bedrock models, and ``middleware._supports_parallel_tool_calls``
+    already unwraps ``.bound`` to find the underlying provider class when
+    deciding whether that's safe, so a temperature-bound model behaves as a
+    drop-in for anywhere a plain chat model is accepted (eval candidate
+    generation; see ``eval/candidates.py``).
+    """
+    return model.bind(temperature=temperature)
+
+
 class LangChainEmbedder:
     """:class:`Embedder` over any LangChain ``Embeddings``.
 
