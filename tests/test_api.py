@@ -664,3 +664,65 @@ def test_answer_clarification_unknown_id_is_404(tmp_path):
 def test_answer_clarification_requires_choice_or_answer(tmp_path):
     client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
     assert client.post("/clarifications/q001/answer", json={}).status_code == 422
+
+
+def _elicitation_client(tmp_path):
+    """A ledger seeded with the REAL A-category "amount" candidate from
+    ``generate_candidate_questions`` (not a hand-rolled fixture) — its
+    ``target_table`` is "orders" (alphabetically first of the two tables the
+    "amount" term matches), "payments" being the other one. Reused by both
+    the auto-D-trigger and no-spurious-D API tests below."""
+    from governed_bi.curator.clarifications import write_clarifications
+    from governed_bi.curator.elicitation import generate_candidate_questions
+
+    from test_elicitation import _schema_tables
+
+    candidates = generate_candidate_questions(_schema_tables())
+    amount_q = next(r for r in candidates if r.category == "A" and "amount" in r.scope)
+    assert amount_q.target_table == "orders"
+    choice_ids = {c["id"] for c in (amount_q.choices or [])}
+    assert {"orders.total_amount", "payments.revenue_amount"} <= choice_ids
+
+    write_clarifications(tmp_path / "clarifications.jsonl", [amount_q])
+    stack = replace(build_stack(), corpus_root=tmp_path, can_edit=True, edit_mode="file")
+    return TestClient(create_app(stack)), amount_q
+
+
+def test_answer_clarification_auto_triggers_d_followup_through_api_route(tmp_path):
+    """End-to-end wiring check (the gap the manual checklist's D-auto-trigger
+    bullet points at): answering the real A candidate through the actual
+    ``POST /clarifications/{id}/answer`` route — not by calling
+    ``maybe_generate_join_followup`` directly — with a choice on the table
+    OTHER than the expected ``target_table`` ("orders") must land a new,
+    open D-category record in the ledger."""
+    client, amount_q = _elicitation_client(tmp_path)
+
+    r = client.post(
+        f"/clarifications/{amount_q.id}/answer",
+        json={"choice_id": "payments.revenue_amount"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"] == "'amount' maps to payments.revenue_amount."
+
+    records = client.get("/clarifications").json()
+    followups = [rec for rec in records if rec.get("category") == "D"]
+    assert len(followups) == 1
+    followup = followups[0]
+    assert followup["status"] == "open"
+    assert "orders" in followup["question"] and "payments" in followup["question"]
+
+
+def test_answer_clarification_no_spurious_d_followup_when_table_matches(tmp_path):
+    """Same real A candidate/route as above, but the picked choice is on the
+    EXPECTED table ("orders") — no D follow-up should be created."""
+    client, amount_q = _elicitation_client(tmp_path)
+
+    r = client.post(
+        f"/clarifications/{amount_q.id}/answer",
+        json={"choice_id": "orders.total_amount"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"] == "'amount' maps to orders.total_amount."
+
+    records = client.get("/clarifications").json()
+    assert all(rec.get("category") != "D" for rec in records)
