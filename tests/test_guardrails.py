@@ -156,6 +156,38 @@ def test_derived_cte_column_is_deferred_not_blocked():
     assert _check(sql).passed
 
 
+def test_order_by_own_select_alias_passes():
+    # Found live (2026-07-26): ``ORDER BY <computed-column alias>`` is standard,
+    # widely-supported SQL (the alias labels an expression whose own columns are
+    # already validated by this same pass) — it was being misjudged as a bare
+    # reference to an unknown *table* column and blocked, breaking any
+    # "top N by <computed metric>" query.
+    sql = (
+        'SELECT c.State, SUM(t.PurchasePrice) AS total_revenue '
+        'FROM customers c JOIN "transaction" t ON c.CustomerID = t.CustomerID '
+        "GROUP BY c.State ORDER BY total_revenue DESC"
+    )
+    assert _check(sql).passed
+
+
+def test_order_by_alias_does_not_bypass_a_real_suspect_column_of_the_same_name():
+    # The exception only fires for ORDER BY; a WHERE/HAVING reference to a bare
+    # name still resolves against real base columns and is judged as before —
+    # confirms the fix didn't widen the fail-closed policy beyond ORDER BY.
+    verdict = _check("SELECT c.First FROM customers c WHERE ZipCode = '1'")
+    assert not verdict.passed
+    assert verdict.failed_layer is GuardrailLayer.ast_column_allowlist
+
+
+def test_order_by_unknown_bare_name_still_blocked():
+    # An ORDER BY name that is neither a real column nor this query's own alias
+    # must still fail closed — the exception is narrowly for a genuine self-alias
+    # match, not "any bare name in ORDER BY."
+    verdict = _check("SELECT c.First FROM customers c ORDER BY totally_made_up")
+    assert not verdict.passed
+    assert verdict.failed_layer is GuardrailLayer.ast_column_allowlist
+
+
 # --------------------------------------------------------------------------- #
 # L3: suspect-column enforcement toggle (Server "three points" #1)
 # --------------------------------------------------------------------------- #
