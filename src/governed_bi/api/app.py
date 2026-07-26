@@ -837,6 +837,16 @@ def create_app(stack: ServeStack | None = None):
             raise HTTPException(status_code=500, detail="failed to answer the question")
         finally:
             connector.close()
+        if stack.settings.enable_mistake_memory:
+            from .live_mistake_memory import mine_live_mistake
+
+            mine_live_mistake(
+                stack,
+                corpus_analyst.schema,
+                session_id=req.session_id,
+                question=req.question,
+                answer=answer,
+            )
         return AnswerResponse.model_validate(presenter.answer_view(answer))
 
     return app

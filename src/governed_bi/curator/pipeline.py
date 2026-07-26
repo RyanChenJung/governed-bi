@@ -945,3 +945,76 @@ def apply_answered_clarifications_to_corpus(
     ]
     write_clarifications(ledger_path, updated)
     return applied + caveats
+
+
+def apply_live_mistake_memory(
+    corpus_root: Path | str,
+    schema: str,
+    *,
+    chat: "ChatClient",
+    question_id: str,
+    question: str,
+    wrong_sql: str,
+    gold_sql: str,
+) -> str:
+    """Productized Round 6 (``curator.mistake_memory``): fold ONE live,
+    gold-label-free mistake — a ``(wrong_sql, gold_sql)`` pair pulled from a
+    single conversation turn's own retry-success (see
+    ``curator.mistake_memory.mistake_from_ledger``) — into an already-served
+    corpus, gated on ``Settings.enable_mistake_memory``.
+
+    Mirrors :func:`apply_answered_clarifications_to_corpus`'s load/write shape
+    (same ``AssetBag`` reconstruction from the existing corpus tree, same
+    ``bag.write`` persistence) but skips the clarifications-ledger machinery
+    entirely — there is no ``ClarificationRecord`` here, just the one mistake
+    pair the caller already extracted from ``governance_ledger``. Runs the
+    SAME LLM characterization call Round 6 used offline
+    (:func:`~.mistake_memory.characterize_mistake`) and writes the SAME
+    ``gotchas``/``on_match`` ``NoteAsset`` shape
+    (:func:`~.mistake_memory.build_mistake_note`), so the existing
+    retrieval/injection pipeline picks it up for a later question exactly like
+    any train-mined note — no parallel note type, no parallel retrieval path.
+
+    Returns ``"ok: wrote <note_id>"`` on success, or a ``"skip: ..."`` /
+    ``"error: ..."`` message on any failure (mirrors ``AssetBag.propose_note``'s
+    convention) — callers should log-and-continue rather than fail the chat
+    turn the note came from, since a mistake-memory write is a fire-and-forget
+    side effect on top of an already-delivered answer.
+    """
+    from ..corpus.loader import load_corpus
+    from ..corpus.schemas import TableAsset
+    from .mistake_memory import MistakeInput, MistakeMemoryError, build_mistake_note, characterize_mistake
+
+    corpus_root = Path(corpus_root)
+    corpus = load_corpus(corpus_root, schema=schema)
+    tables = [a for a in corpus.assets if isinstance(a, TableAsset)]
+    other = [a for a in corpus.assets if not isinstance(a, TableAsset)]
+
+    bag = AssetBag.from_tables(schema, tables)
+    for asset in other:
+        if asset.asset_type == "join":
+            bag.joins[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "metric":
+            bag.metrics[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "term":
+            bag.terms[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "few_shot":
+            bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "rule":
+            bag.rules[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "note":
+            bag.notes[asset.id] = asset  # type: ignore[assignment]
+
+    mistake = MistakeInput(
+        question_id=question_id, question=question, wrong_sql=wrong_sql, gold_sql=gold_sql
+    )
+    try:
+        characterization = characterize_mistake(chat, question, wrong_sql, gold_sql)
+    except MistakeMemoryError as err:
+        return f"skip: could not characterize live mistake: {err}"
+    note = build_mistake_note(schema, mistake, characterization)
+    if note.id in bag.notes:
+        return f"skip: {note.id} already recorded"
+    bag.notes[note.id] = note
+    bag.write(corpus_root)
+    return f"ok: wrote {note.id}"

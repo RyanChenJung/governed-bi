@@ -194,6 +194,21 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                 continue
             break
 
+        if stack.settings.enable_mistake_memory:
+            # Round 6 productized (see ``api/live_mistake_memory.py`` for the full
+            # rationale): this turn's own ``governance_ledger`` supplies a
+            # gold-label-free (wrong, fix) pair whenever a failed run_query attempt
+            # was followed by a passing one. Fire-and-forget — never raises.
+            from governed_bi.api.live_mistake_memory import mine_live_mistake
+
+            mine_live_mistake(
+                stack,
+                corpus_analyst.schema,
+                session_id=thread_id,
+                question=question,
+                answer=result,
+            )
+
         view = asdict(presenter.answer_view(result))
         text = view.get("text") or view.get("escalation") or ""
         return {

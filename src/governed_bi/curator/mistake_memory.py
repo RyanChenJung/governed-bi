@@ -212,6 +212,41 @@ def build_mistake_note(
     )
 
 
+def mistake_from_ledger(ledger: "list[dict]") -> "tuple[str, str] | None":
+    """Live, gold-label-free equivalent of a TRAIN-split mistake (see module
+    docstring): a production conversation has no gold SQL to diff a wrong
+    answer against, but its own ``governance_ledger`` (one entry per
+    ``run_query`` attempt in the turn — see
+    ``analyst.middleware.GovernanceMiddleware.wrap_tool_call``) already
+    contains an equivalent signal whenever the agent retries and succeeds: a
+    failed attempt (``verdict`` ``"block"`` or ``"error"``) followed *later in
+    the same ledger* by a passing attempt (``verdict`` ``"pass"``) is a
+    self-contained (wrong, fix) pair — the conversation's own retry-success
+    IS the correction signal, no external ground truth required.
+
+    Returns ``(wrong_sql, fixed_sql)`` for the failed attempt immediately
+    preceding the first subsequent pass (the closest, most-directly-corrected
+    pair), or ``None`` if the ledger never both failed and later passed a
+    ``run_query``, or the "fix" is identical SQL (e.g. a transient error retried
+    verbatim — nothing to learn from that).
+    """
+    last_failed_sql: str | None = None
+    for entry in ledger:
+        if entry.get("action") != "run_query":
+            continue
+        verdict = entry.get("verdict")
+        if verdict in ("block", "error"):
+            sql = entry.get("sql")
+            if sql:
+                last_failed_sql = sql
+        elif verdict == "pass" and last_failed_sql is not None:
+            fixed_sql = entry.get("sql")
+            if fixed_sql and fixed_sql != last_failed_sql:
+                return last_failed_sql, fixed_sql
+            return None
+    return None
+
+
 def build_mistake_memory(
     chat: "ChatClient", schema: str, mistakes: list[MistakeInput]
 ) -> list[NoteAsset]:
