@@ -514,6 +514,149 @@ def test_apply_answered_clarifications_to_corpus_folds_live_chat_source(tmp_path
     assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
 
 
+def test_apply_answered_clarifications_to_corpus_reuses_notes_across_separate_calls(
+    tmp_path: Path,
+):
+    """Regression: ``apply_answered_clarifications_to_corpus`` rebuilds a fresh
+    ``AssetBag`` from ``corpus_root`` on every call (each answered live-chat
+    clarification folds in its own call — see ``analyst.tools
+    ._fold_answered_clarifications``). The rebuild loop seeded ``bag.joins`` /
+    ``bag.metrics`` / ``bag.terms`` / ``bag.few_shots`` from the assets already
+    on disk, but had no ``elif asset.asset_type == "note"`` branch — so a
+    ``NoteAsset`` folded by an EARLIER call was silently dropped from the
+    ``AssetBag`` a LATER call builds, even though the file is still on disk.
+
+    That meant the Enhancer's ``existing_notes`` argument (see
+    ``curator.enhancer.Enhancer.decide`` / ``AssetBag.record_caveats``) was
+    always empty for any note created in a prior fold call — the Enhancer had
+    no way to recognize a second, differently-worded clarification about the
+    same concept as a duplicate, because it was never shown the first note at
+    all. (Diagnosed live: a real Bedrock-backed run of two separate
+    conversations both defining a "gold member" threshold minted two separate
+    notes instead of reinforcing one — see ``tests/test_enhancer_live.py``.)
+
+    This proves the fix directly: the note created by the FIRST fold call is
+    present in ``existing_notes`` on the SECOND call's Enhancer prompt, and a
+    duplicate decision reinforces the existing note rather than being unable
+    to reference it.
+    """
+    import json
+
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+
+    rec_1 = ClarificationRecord(
+        id="q_live_010",
+        scope="live_chat:q_live_010",
+        question="What counts as a 'gold member'?",
+        status=ClarificationRecordStatus.answered,
+        answer="A gold member is a customer whose total spend exceeds $150.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+    write_clarifications(clarifications_path(corpus_root), [rec_1])
+
+    new_concept_json = json.dumps(
+        {
+            "concept_name": "gold_member",
+            "asset_type": "note",
+            "generalized_definition": (
+                "A gold member is a customer whose total spend exceeds $150."
+            ),
+            "base_table": None,
+            "expression": None,
+            "duplicate_of": None,
+            "conflict_with": None,
+        }
+    )
+    folded_1 = apply_answered_clarifications_to_corpus(
+        corpus_root, schema, chat=StaticChatClient(new_concept_json)
+    )
+    assert folded_1 == 1
+
+    corpus_after_1 = load_corpus(corpus_root, schema=schema)
+    notes_after_1 = [a for a in corpus_after_1.assets if isinstance(a, NoteAsset)]
+    assert len(notes_after_1) == 1
+    existing_note = notes_after_1[0]
+
+    # Second call, second answered clarification — a SEPARATE
+    # apply_answered_clarifications_to_corpus invocation, exactly like two
+    # separate live-chat conversations each triggering their own fold.
+    rec_2 = ClarificationRecord(
+        id="q_live_011",
+        scope="live_chat:q_live_011",
+        question="How do we define a 'top-tier buyer'?",
+        status=ClarificationRecordStatus.answered,
+        answer="Top-tier buyers are customers whose combined spend is over $150.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+    records = load_clarifications(clarifications_path(corpus_root))
+    write_clarifications(clarifications_path(corpus_root), [*records, rec_2])
+
+    duplicate_json = json.dumps(
+        {
+            "concept_name": "gold_member",
+            "asset_type": "note",
+            "generalized_definition": existing_note.summary,
+            "base_table": None,
+            "expression": None,
+            "duplicate_of": existing_note.id,
+            "conflict_with": None,
+        }
+    )
+    chat_2 = StaticChatClient(duplicate_json)
+    folded_2 = apply_answered_clarifications_to_corpus(corpus_root, schema, chat=chat_2)
+    assert folded_2 == 1
+
+    # The bug: without seeding bag.notes from disk, this would be `[]` even
+    # though `existing_note` is sitting right there in corpus_root.
+    assert chat_2.calls, "Enhancer should have been invoked for the second fold"
+    prompt_payload = json.loads(chat_2.calls[-1][1].split("\n\n", 1)[1])
+    existing_note_ids = {n["id"] for n in prompt_payload["existing_notes"]}
+    assert existing_note.id in existing_note_ids, (
+        f"existing note {existing_note.id!r} was not shown to the Enhancer on the "
+        f"second fold call — existing_notes={prompt_payload['existing_notes']!r}"
+    )
+
+    # And the duplicate decision actually reinforced the SAME note rather than
+    # minting a second one.
+    corpus_after_2 = load_corpus(corpus_root, schema=schema)
+    notes_after_2 = [a for a in corpus_after_2.assets if isinstance(a, NoteAsset)]
+    assert len(notes_after_2) == 1, (
+        f"expected the duplicate to reinforce the existing note, not mint a new "
+        f"one: {[n.id for n in notes_after_2]}"
+    )
+    reinforced = notes_after_2[0]
+    provenance = reinforced.audit.provenance if reinforced.audit else None
+    assert "q_live_011" in list(getattr(provenance, "reinforced_by", None) or [])
+
+
 def test_assumption_rows_pick_up_answered_clarification_with_question_intact(tmp_path: Path):
     """Round 9: the admin "agreed assumptions" log view (``presenter.assumption_rows``
     / ``GET /corpus/assumptions``) reads ``NoteAsset.source_question`` — the field

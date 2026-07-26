@@ -919,6 +919,8 @@ def apply_answered_clarifications_to_corpus(
             bag.terms[asset.id] = asset  # type: ignore[assignment]
         elif asset.asset_type == "few_shot":
             bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+        elif asset.asset_type == "note":
+            bag.notes[asset.id] = asset  # type: ignore[assignment]
         elif asset.asset_type == "rule":
             bag.rules[asset.id] = asset  # type: ignore[assignment]
 
