@@ -203,7 +203,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
 
             mine_live_mistake(
                 stack,
-                corpus_analyst.schema,
+                stack.datasource.corpus_pin,
                 session_id=thread_id,
                 question=question,
                 answer=result,

@@ -842,7 +842,7 @@ def create_app(stack: ServeStack | None = None):
 
             mine_live_mistake(
                 stack,
-                corpus_analyst.schema,
+                stack.datasource.corpus_pin,
                 session_id=req.session_id,
                 question=req.question,
                 answer=answer,
