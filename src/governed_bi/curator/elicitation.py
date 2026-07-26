@@ -122,7 +122,7 @@ def _propose_a(tables: Sequence[TableAsset], limit: int) -> list[ClarificationRe
                 category="A",
                 ui_modality="column_picker",
                 choices=choices,
-                allow_freeform=False,
+                allow_freeform=True,
                 target_table=matches[0][0],  # "expected" table for the D heuristic
                 raised_by=["elicitation_wizard"],
                 source=ELICITATION_SOURCE,
@@ -151,7 +151,26 @@ def _propose_c(tables: Sequence[TableAsset], limit: int) -> list[ClarificationRe
             question="What month does your fiscal year start? (enter 1-12, 1 = January)",
             category="C",
             ui_modality="numeric",
-            choices=None,
+            choices=[
+                {"id": str(i), "label": name}
+                for i, name in enumerate(
+                    [
+                        "1 - January",
+                        "2 - February",
+                        "3 - March",
+                        "4 - April",
+                        "5 - May",
+                        "6 - June",
+                        "7 - July",
+                        "8 - August",
+                        "9 - September",
+                        "10 - October",
+                        "11 - November",
+                        "12 - December",
+                    ],
+                    start=1,
+                )
+            ],
             allow_freeform=True,
             raised_by=["elicitation_wizard"],
             source=ELICITATION_SOURCE,
@@ -196,7 +215,7 @@ def _propose_e(tables: Sequence[TableAsset], limit: int) -> list[ClarificationRe
                         },
                         {"id": "include", "label": "Include them"},
                     ],
-                    allow_freeform=False,
+                    allow_freeform=True,
                     target_table=table.physical_name,
                     target_column=column.physical_name,
                     raised_by=["elicitation_wizard"],
@@ -233,7 +252,7 @@ def _propose_b(tables: Sequence[TableAsset], limit: int) -> list[ClarificationRe
                     category="B",
                     ui_modality="checklist",
                     choices=[{"id": v, "label": v} for v in values],
-                    allow_freeform=False,
+                    allow_freeform=True,
                     target_table=table.physical_name,
                     target_column=column.physical_name,
                     raised_by=["elicitation_wizard"],
@@ -297,31 +316,55 @@ def compose_elicitation_answer_text(
     ``resolve_answer_text`` returns it verbatim (see its category-tagged
     special case).
     """
+    # Every category now accepts either a picked choice or freeform text (a
+    # user may answer either way) — each branch below must handle whichever
+    # one was actually supplied, not just the modality the question was
+    # designed around, or the other input silently vanishes instead of
+    # folding (the exact "choice-picked answer disappears" bug class this
+    # codebase has hit and fixed before, just for the opposite input shape).
     choices_by_id = {c["id"]: c["label"] for c in (rec.choices or [])}
     freeform = (freeform or "").strip()
 
     if rec.category == "A":
         term = rec.scope.rsplit(":", 1)[-1]
-        label = choices_by_id.get(choice_id or "", choice_id or "")
-        return f"'{term}' maps to {label}."
+        if choice_id is not None:
+            label = choices_by_id.get(choice_id, choice_id)
+            return f"'{term}' maps to {label}."
+        if freeform:
+            return f"'{term}' maps to {freeform}."
+        return ""
     if rec.category == "C":
-        return f"Fiscal year starts in month {freeform}." if freeform else ""
+        if freeform:
+            return f"Fiscal year starts in month {freeform}."
+        if choice_id is not None:
+            label = choices_by_id.get(choice_id, choice_id)
+            return f"Fiscal year starts in month {label}."
+        return ""
     if rec.category == "E":
         if choice_id == "exclude":
             label = choices_by_id.get(choice_id, "")
             return f"{label} — apply this exclusion by default."
-        return (
-            f"{rec.target_table}.{rec.target_column}: no default exclusion "
-            "(include all values)."
-        )
+        if choice_id == "include":
+            return (
+                f"{rec.target_table}.{rec.target_column}: no default exclusion "
+                "(include all values)."
+            )
+        if freeform:
+            return f"{rec.target_table}.{rec.target_column}: {freeform}"
+        return ""
     if rec.category == "B":
         selected = [choices_by_id.get(cid, cid) for cid in (choice_ids or [])]
-        if not selected:
-            return ""
-        return (
-            f"For {rec.target_table}.{rec.target_column}, these values count as the "
-            f"grouping asked about: {', '.join(selected)}."
-        )
+        if selected:
+            return (
+                f"For {rec.target_table}.{rec.target_column}, these values count as the "
+                f"grouping asked about: {', '.join(selected)}."
+            )
+        if freeform:
+            return (
+                f"For {rec.target_table}.{rec.target_column}, the grouping asked about: "
+                f"{freeform}"
+            )
+        return ""
     if rec.category == "D":
         return freeform
     return freeform or choices_by_id.get(choice_id or "", "")

@@ -85,7 +85,11 @@ def test_a_question_offers_column_picker_choices_across_tables():
     assert revenue_like, "expected an A question for the 'amount' term"
     rec = revenue_like[0]
     assert rec.ui_modality == "column_picker"
-    assert rec.allow_freeform is False
+    # Every category accepts freeform as a fallback alongside its picker/
+    # checklist/checkbox — a user answering "in their own words" instead of
+    # picking must not silently lose their answer (see
+    # compose_elicitation_answer_text's per-category freeform handling).
+    assert rec.allow_freeform is True
     labels = {c["id"] for c in (rec.choices or [])}
     assert "orders.total_amount" in labels
     assert "payments.revenue_amount" in labels
@@ -222,6 +226,75 @@ def test_compose_answer_text_category_b_checklist():
     text = compose_elicitation_answer_text(rec, choice_ids=["US", "CA"])
     assert "US, CA" in text
     assert compose_elicitation_answer_text(rec, choice_ids=[]) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Every category also accepts the OTHER input mode (a user answering "in
+# their own words" instead of picking/checking must not lose their answer —
+# the exact "choice-picked answer disappears" bug class this codebase has hit
+# before, here for the opposite input shape).
+# --------------------------------------------------------------------------- #
+
+
+def test_compose_answer_text_category_a_via_freeform():
+    rec = ClarificationRecord(
+        id="q001",
+        scope="elicitation:term:revenue",
+        question="?",
+        category="A",
+        choices=[{"id": "payments.revenue_amount", "label": "payments.revenue_amount"}],
+        source="elicitation_wizard",
+    )
+    text = compose_elicitation_answer_text(rec, freeform="orders.grand_total")
+    assert text == "'revenue' maps to orders.grand_total."
+
+
+def test_compose_answer_text_category_c_via_choice():
+    rec = ClarificationRecord(
+        id="q002",
+        scope="elicitation:rule:fiscal_year_start",
+        question="?",
+        category="C",
+        choices=[{"id": "10", "label": "10 - October"}],
+        source="elicitation_wizard",
+    )
+    text = compose_elicitation_answer_text(rec, choice_id="10")
+    assert text == "Fiscal year starts in month 10 - October."
+
+
+def test_compose_answer_text_category_e_via_freeform():
+    rec = ClarificationRecord(
+        id="q003",
+        scope="elicitation:exclusion:orders.review_status",
+        question="?",
+        category="E",
+        choices=[
+            {"id": "exclude", "label": "Exclude rows where review_status = 'not_yet_rated'"},
+            {"id": "include", "label": "Include them"},
+        ],
+        target_table="orders",
+        target_column="review_status",
+        source="elicitation_wizard",
+    )
+    text = compose_elicitation_answer_text(rec, freeform="Only exclude when the reviewer was a bot")
+    assert "orders.review_status" in text
+    assert "Only exclude when the reviewer was a bot" in text
+
+
+def test_compose_answer_text_category_b_via_freeform():
+    rec = ClarificationRecord(
+        id="q004",
+        scope="elicitation:valuemap:orders.country_code",
+        question="?",
+        category="B",
+        choices=[{"id": v, "label": v} for v in ["US", "CA", "MX"]],
+        target_table="orders",
+        target_column="country_code",
+        source="elicitation_wizard",
+    )
+    text = compose_elicitation_answer_text(rec, freeform="Anything in North America")
+    assert "orders.country_code" in text
+    assert "Anything in North America" in text
 
 
 # --------------------------------------------------------------------------- #
