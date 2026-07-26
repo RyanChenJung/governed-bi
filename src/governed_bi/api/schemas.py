@@ -37,6 +37,11 @@ class CapabilitiesResponse(_View):
     can_scope: bool  # whether the summary/detail/scoping schema routes are served
     can_search: bool  # whether a server-side FTS endpoint exists (False: client Fuse)
     can_clarify: bool = False  # whether serve-time HITL (ask_user interrupts) is available
+    # "audit" (default, unchanged today) | "simple" — the UtkuAI business-user
+    # view. The payload is identical either way; this only tells the frontend
+    # which default rendering to start on (it may still let the user reveal
+    # the audit view client-side without a re-fetch).
+    ui_display_mode: str = "audit"
 
 
 # ── health ────────────────────────────────────────────────────────────────── #

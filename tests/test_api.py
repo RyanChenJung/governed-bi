@@ -58,6 +58,9 @@ def test_capabilities_reports_offline_dev(client):
     # Additive scoping flags: the summary/detail routes are served; no server FTS.
     assert body["can_scope"] is True
     assert body["can_search"] is False
+    # UtkuAI Phase 1b: unset in the committed governed_bi.toml -> defaults to
+    # "audit" (today's technical-cockpit behavior, unchanged).
+    assert body["ui_display_mode"] == "audit"
 
 
 def test_capabilities_flags_reflect_the_stack():
@@ -72,6 +75,21 @@ def test_capabilities_flags_reflect_the_stack():
     assert body["can_stream"] is False
     assert body["can_edit"] is False
     assert body["edit_mode"] is None
+
+
+def test_capabilities_reports_simple_ui_display_mode_when_set():
+    """UtkuAI Phase 1b: a static Settings passthrough (no live override, unlike
+    can_clarify) — flipping it on the stack's settings is immediately reflected."""
+    stack = build_stack()
+    simple = TestClient(
+        create_app(replace(stack, settings=replace(stack.settings, ui_display_mode="simple")))
+    )
+    assert simple.get("/capabilities").json()["ui_display_mode"] == "simple"
+
+    audit = TestClient(
+        create_app(replace(stack, settings=replace(stack.settings, ui_display_mode="audit")))
+    )
+    assert audit.get("/capabilities").json()["ui_display_mode"] == "audit"
 
 
 def test_build_stack_defaults_can_stream_false():

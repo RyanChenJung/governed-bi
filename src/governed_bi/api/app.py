@@ -161,6 +161,9 @@ def create_app(stack: ServeStack | None = None):
             and get_allow_user_clarification(
                 stack.corpus_root, stack.settings.allow_user_clarification
             ),
+            # UtkuAI Phase 1b: a static settings passthrough (no live override,
+            # unlike can_clarify above) — the admin sets it in governed_bi.toml.
+            ui_display_mode=stack.settings.ui_display_mode,
         )
 
     @app.post(

@@ -202,6 +202,14 @@ class Settings:
     allow_user_clarification: bool = False
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
 
+    # ── UI display mode (Phase 1b) ──
+    # "audit" (default): today's unchanged technical cockpit — pipeline stages,
+    # SQL, full provenance always visible. "simple": the UtkuAI business-user
+    # view (question + plain-language answer + reliability indicator only);
+    # the frontend still receives the same payload and gates rendering
+    # client-side, so a user can reveal the audit view without a re-fetch.
+    ui_display_mode: str = "audit"  # "audit" | "simple"
+
     # ── Result sanity check (CHESS "Unit Tester" pattern; Round 1) ──
     # When True, ``run_query`` accepts optional structured ``assertions`` about
     # the expected result shape (row count / sign / null-ness); a failed
@@ -288,6 +296,7 @@ class Settings:
         can_stream: bool | None = None,
         allow_edit: bool | None = None,
         allow_user_clarification: bool | None = None,
+        ui_display_mode: str | None = None,
         enable_result_sanity_check: bool | None = None,
         enable_mistake_memory: bool | None = None,
         mistake_memory_match_mode: str | None = None,
@@ -312,6 +321,8 @@ class Settings:
             base["allow_edit"] = allow_edit
         if allow_user_clarification is not None:
             base["allow_user_clarification"] = allow_user_clarification
+        if ui_display_mode is not None:
+            base["ui_display_mode"] = ui_display_mode
         if enable_result_sanity_check is not None:
             base["enable_result_sanity_check"] = enable_result_sanity_check
         if enable_mistake_memory is not None:
@@ -511,6 +522,7 @@ def load_settings(
     allow_user_clarification = (
         bool(serve["allow_user_clarification"]) if "allow_user_clarification" in serve else None
     )
+    ui_display_mode = str(serve["ui_display_mode"]) if "ui_display_mode" in serve else None
     enable_result_sanity_check = (
         bool(serve["enable_result_sanity_check"])
         if "enable_result_sanity_check" in serve
@@ -541,6 +553,7 @@ def load_settings(
         can_stream=can_stream,
         allow_edit=allow_edit,
         allow_user_clarification=allow_user_clarification,
+        ui_display_mode=ui_display_mode,
         enable_result_sanity_check=enable_result_sanity_check,
         enable_mistake_memory=enable_mistake_memory,
         cors_origins=cors_origins,

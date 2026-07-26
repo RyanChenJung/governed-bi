@@ -67,6 +67,23 @@ def test_settings_carries_a_default_model_config():
     assert settings.cors_origins == ("http://localhost:3000",)
 
 
+def test_ui_display_mode_defaults_to_audit():
+    """UtkuAI Phase 1b: without any config, behavior/rendering is unchanged —
+    the new toggle must default to today's technical-cockpit mode."""
+    assert Settings.for_env(Environment.dev).ui_display_mode == "audit"
+    assert Settings.for_env(Environment.prod).ui_display_mode == "audit"
+
+
+def test_ui_display_mode_toml_override(tmp_path):
+    cfg = tmp_path / "governed_bi.toml"
+    cfg.write_text(
+        "\n".join(["[serve]", 'ui_display_mode = "simple"']),
+        encoding="utf-8",
+    )
+    settings = load_settings(cfg, apply_local=False)
+    assert settings.ui_display_mode == "simple"
+
+
 # --------------------------------------------------------------------------- #
 # load_settings
 # --------------------------------------------------------------------------- #

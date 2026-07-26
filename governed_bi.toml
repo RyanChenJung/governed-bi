@@ -89,6 +89,11 @@ allow_edit = true                        # corpus file-write (dev); set false fo
 # self-correcting-in-the-moment philosophy instead.
 allow_user_clarification = false
 cors_origins = ["http://localhost:3000"]
+# ui_display_mode: "audit" (default) keeps today's technical cockpit (pipeline
+# stages, SQL, provenance) fully visible. Set "simple" for the UtkuAI
+# business-user view (question + plain-language answer + reliability only);
+# the frontend can still reveal the audit view client-side without a re-fetch.
+ui_display_mode = "audit"
 
 # Memory / cache / few-shot numeric gates (Architecture §7) are still code
 # defaults on Settings today — not yet loaded from this file.
