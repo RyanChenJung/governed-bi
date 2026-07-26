@@ -1,17 +1,12 @@
-asset_type: note
-id: note_public_environmental_suitability_index
-kind: context
-scope: []
-summary: Environmental Suitability Index (ESI) is a derived score per scan environment
-  reading, computed from ambient temperature, humidity percentage, and illuminance
-  in scanenvironment, where higher values indicate better scanning conditions; result
-  is rounded to 2 decimal places unless otherwise specified.
-triggers: []
-activation: always
-normative_force: advisory
-confidence: 0.7
-related_notes: []
-publication_status: certified
+asset_type: metric
+id: metric_archeology_environmental_suitability_index
+name: environmental_suitability_index
+base_table: tbl_archeology_scanenvironment
+expression: ROUND(100 - 2.5*ABS(AmbicTemp - 20) - POWER(ABS((HumePct - 50)/2), 1.5)
+  - 600/(IllumeLux + 100), 2)
+dimensions: []
+rules: []
+confidence: 0.75
 source_question: 'There''s no predefined "scanning suitability" metric in the data.
   Could you clarify what you''d like this to represent? For example: (a) environmental
   conditions score (based on ambient temp/humidity/illumination in scanenvironment),
@@ -26,5 +21,4 @@ audit:
     source: human
     status: certified
     source_refs: []
-    built_at: '2026-07-26T17:12:23.402769+00:00'
     by: live_chat_user
