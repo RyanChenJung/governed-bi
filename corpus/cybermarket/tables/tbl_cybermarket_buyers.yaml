@@ -1,0 +1,142 @@
+asset_type: table
+id: tbl_cybermarket_buyers
+schema: public
+physical_name: buyers
+columns:
+- physical_name: buyregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - BUY_4CF99
+  - BUY_SAR2O
+  - BUY_9KX6B
+  - BUY_I28N8
+  - BUY_DGBXD
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyspan
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 326
+  - 166
+  - 81
+  - 10
+  - 94
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buytxtally
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 10
+  - 40
+  - 96
+  - 74
+  - 30
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyspending
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Low
+  - Medium
+  - Medium
+  - Medium
+  - Low
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyfreqcat
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Heavy
+  - Regular
+  - One-time
+  - One-time
+  - One-time
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buychecklvl
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Advanced
+  - Basic
+  - Basic
+  - Basic
+  - Advanced
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyriskrate
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '29.50'
+  - '71.50'
+  - '54.50'
+  - '27.40'
+  - '94.20'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - MKT_SOB5D
+  - MKT_3VNMP
+  - MKT_3Y1WX
+  - MKT_QC5NK
+  - MKT_46CZQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - VEND_0DY9A
+  - VEND_2JDYC
+  - VEND_JAI03
+  - VEND_HPORG
+  - VEND_7BVLA
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

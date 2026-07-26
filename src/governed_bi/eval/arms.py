@@ -64,6 +64,22 @@ class Solver(Protocol):
     def solve(self, question: str) -> str | None: ...
 
 
+@runtime_checkable
+class MetaSolver(Solver, Protocol):
+    """A :class:`Solver` that also returns per-question audit metadata.
+
+    ``solve_with_meta`` is the primitive: it returns ``(sql, meta)`` for one
+    question with **no shared-mutable state**, so a result pairs to its question
+    by return value (not by call order). That makes it safe to call
+    concurrently on distinct instances and removes the stale-meta hazard the old
+    ``last_solve_meta`` instance attribute carried (audit-backlog C5). ``solve``
+    stays as the SQL-only convenience for callers that do not need the meta
+    (``run_arm`` / the refuse-gate).
+    """
+
+    def solve_with_meta(self, question: str) -> tuple[str | None, dict]: ...
+
+
 def _touches_suspect(sql: str, suspect_columns: frozenset[str], dialect: str) -> bool:
     if not suspect_columns:
         return False
@@ -137,34 +153,55 @@ def agent_solver(
     model,
     embedder=None,
     session_id: str = "eval",
-) -> Solver:
-    """A :class:`Solver` that drives the ADR-0002 agentic serve core.
+    enable_run_log: bool = False,
+    system_prompt_suffix: str | None = None,
+) -> MetaSolver:
+    """A :class:`MetaSolver` that drives the ADR-0002 agentic serve core.
 
     Routes through ``answer_question_agent`` (the ``create_agent`` +
     governance-middleware path) — the one serve path shared by every fair rung
     of the eval ladder (``baseline`` / ``curated`` / ``curated_sme``). The outer
-    rails graph is built once and invoked per question; each ``solve`` is
-    independent (no working memory / cache), matching the single-round eval
-    contract. ``last_solve_meta`` carries audit fields plus the
-    governance-ledger length.
+    rails graph is built once and invoked per question; each call is independent
+    (no working memory / cache), matching the single-round eval contract.
+    ``solve_with_meta`` returns ``(sql, meta)`` where ``meta`` carries audit
+    fields plus the governance-ledger length; ``solve`` returns just the SQL.
+
+    Each question increments ``n_human`` and mints a fresh ``run_id`` (see
+    ``ingest``) so portable run-log UPSERTs do not collapse an N-question run
+    into one ``{session_id}:1`` row. Pass a distinct ``session_id`` per arm (and,
+    under concurrency, per worker) so graphs do not collide on it either.
+
+    Portable run logging is forced off here: eval metrics live in the returned
+    ``meta`` / experiment rows. Opt in by passing settings with ``run_log_kind``
+    already set to a non-default destination via ``enable_run_log=True``.
+
+    ``system_prompt_suffix``, when given, is forwarded to ``build_serve_rails``
+    (Round-2 candidate-pool prompt-style diversity, ``eval/candidates.py``);
+    ``None`` (the default) leaves every existing caller's prompt unchanged.
     """
+    from dataclasses import replace as dc_replace
+
     from ..analyst.agent import build_serve_rails
+
+    log_settings = (
+        settings
+        if enable_run_log
+        else dc_replace(settings, run_log_kind="off")
+    )
 
     graph = build_serve_rails(
         corpus=corpus,
         gateway=gateway,
-        settings=settings,
+        settings=log_settings,
         identity=identity,
         model=model,
         embedder=embedder,
         session_id=session_id,
+        system_prompt_suffix=system_prompt_suffix,
     )
 
     class _AgentSolver:
-        def __init__(self) -> None:
-            self.last_solve_meta: dict = {}
-
-        def solve(self, question: str) -> str | None:
+        def solve_with_meta(self, question: str) -> tuple[str | None, dict]:
             from ..obs import tracing_callbacks
 
             final = graph.invoke(
@@ -173,10 +210,9 @@ def agent_solver(
             )
             answer = final.get("answer")
             if answer is None:
-                self.last_solve_meta = {"refused_by": "no_coverage"}
-                return None
+                return None, {"refused_by": "no_coverage"}
             prov = dict(answer.provenance or {})
-            self.last_solve_meta = {
+            meta = {
                 "refused_by": prov.get("refused_by"),
                 "failed_layer": prov.get("failed_layer"),
                 "graded_delivery": bool(prov.get("graded_delivery")),
@@ -193,7 +229,24 @@ def agent_solver(
                 "shortlisted_schemas": prov.get("shortlisted_schemas"),
                 "schema_pick": prov.get("schema_pick"),
                 "total_schemas": prov.get("total_schemas"),
+                # ADR 0004 L7: token / cost from finalize_and_log provenance.
+                "token_sum": prov.get("token_sum"),
+                "cost_est_usd": prov.get("cost_est_usd"),
+                "usage": prov.get("token_sum") or prov.get("usage"),
+                "turn_id": prov.get("turn_id"),
+                "run_id": prov.get("run_id"),
+                # Round-1 CHESS Unit Tester: every run_query ledger entry's
+                # sanity_check verdict (empty list when the feature is off or no
+                # entry carried assertions), for per-question A/B reporting.
+                "sanity_checks": [
+                    e["sanity_check"]
+                    for e in (prov.get("governance_ledger") or [])
+                    if e.get("action") == "run_query" and "sanity_check" in e
+                ],
             }
-            return answer.sql
+            return answer.sql, meta
+
+        def solve(self, question: str) -> str | None:
+            return self.solve_with_meta(question)[0]
 
     return _AgentSolver()

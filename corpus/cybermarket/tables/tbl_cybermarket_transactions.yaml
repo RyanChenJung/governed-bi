@@ -1,0 +1,292 @@
+asset_type: table
+id: tbl_cybermarket_transactions
+schema: public
+physical_name: transactions
+columns:
+- physical_name: txregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - TX_4F06D
+  - TX_69L3A
+  - TX_F8DOW
+  - TX_LUZYM
+  - TX_48L5V
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: rectag
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - DN541412
+  - DN772007
+  - DN873987
+  - DN647324
+  - DN963094
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: eventstamp
+  physical_type: timestamp without time zone
+  logical_type: datetime
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2021-04-16T05:29:33'
+  - '2021-02-14T22:29:36'
+  - '2025-12-08T05:04:23'
+  - '2025-08-28T12:07:50'
+  - '2022-02-21T21:55:59'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: paymethod
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Crypto_A
+  - Token
+  - Crypto_B
+  - Crypto_A
+  - Token
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: payamtusd
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '12680.09'
+  - '33015.68'
+  - '45450.78'
+  - '20264.46'
+  - '4104.63'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txfeeusd
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '182.00'
+  - '218.30'
+  - '84.52'
+  - '429.14'
+  - '453.42'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: escrowused
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Yes'
+  - 'No'
+  - 'No'
+  - 'No'
+  - 'No'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: escrowhrs
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 69
+  - 121
+  - 47
+  - 48
+  - 170
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: multisigflag
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'No'
+  - 'No'
+  - 'No'
+  - 'No'
+  - 'Yes'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txstatus
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Pending
+  - Completed
+  - Cancelled
+  - Cancelled
+  - Disputed
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txfinishhrs
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '114.90'
+  - '88.70'
+  - '136.10'
+  - '64.00'
+  - '164.90'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: shipmethod
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Express
+  - Custom
+  - Digital
+  - Digital
+  - Standard
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: shipregionsrc
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Region_B
+  - Unknown
+  - Region_B
+  - Region_A
+  - Region_B
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: shipregiondst
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Unknown
+  - Region_X
+  - Region_X
+  - Region_Y
+  - Region_Y
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crossborderflag
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Yes'
+  - 'Yes'
+  - 'No'
+  - 'No'
+  - 'Yes'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: routecomplexity
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Complex
+  - Complex
+  - Medium
+  - Medium
+  - Medium
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - MKT_SOB5D
+  - MKT_3VNMP
+  - MKT_3Y1WX
+  - MKT_QC5NK
+  - MKT_46CZQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - PROD_0C7HD
+  - PROD_LH5LN
+  - PROD_ARXK5
+  - PROD_E7BCI
+  - PROD_559F3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - BUY_4CF99
+  - BUY_SAR2O
+  - BUY_9KX6B
+  - BUY_I28N8
+  - BUY_DGBXD
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

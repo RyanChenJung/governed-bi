@@ -1,7 +1,7 @@
 """FastAPI HTTP interface over the governed serve agent + corpus/audit views.
 
 A thin, **stateless** JSON API: read endpoints serialize the ``viz.presenter``
-view models (schema, relationship graph, corpus assets, skills, health); ``/chat``
+view models (schema, relationship graph, corpus assets, health); ``/chat``
 runs one turn through ``answer_question_agent`` with working memory rebuilt from the
 turns the caller sends. It is the interface a separate frontend (Next.js) consumes
 — see ``docs/ui-frontend-design.md``.
@@ -23,17 +23,28 @@ import logging
 from .. import __version__
 from ..viz import presenter
 from .schemas import (
+    AllowUserClarificationRequest,
+    AllowUserClarificationResponse,
     AnswerResponse,
     AssetRowResponse,
     AssetTypeFilter,
+    AssumptionRowResponse,
     CapabilitiesResponse,
     ChatRequest,
+    ClarificationAnswerRequest,
+    ClarificationResponse,
     ColumnIdentityResponse,
     ColumnRefResponse,
     ColumnRelatedMetaResponse,
     ColumnRelatedResponse,
+    ConflictResolveRequest,
+    ConflictResolveResponse,
+    ConflictRowResponse,
+    DraftApproveRequest,
+    DraftApproveResponse,
     EditRequest,
     EditResponse,
+    ElicitationGenerateResponse,
     HealthResponse,
     KnowledgeGraphResponse,
     RelatedJoinResponse,
@@ -42,10 +53,10 @@ from .schemas import (
     RelatedTermResponse,
     SchemaGraphResponse,
     SchemaSummaryResponse,
-    SkillResponse,
     TableResponse,
     TableSummaryResponse,
 )
+from .runtime_toggles import get_allow_user_clarification, set_allow_user_clarification
 from .stack import ServeStack, build_stack
 
 logger = logging.getLogger("governed_bi.api")
@@ -141,8 +152,39 @@ def create_app(stack: ServeStack | None = None):
             can_search=stack.can_search,
             # Serve-time HITL: the agent may ask a clarifying question mid-turn via
             # a LangGraph interrupt the UI answers with stream.respond (streaming path).
-            can_clarify=stack.can_clarify,
+            # Recomputed live (Round D3) rather than read from the frozen
+            # ``stack.can_clarify`` — the admin can flip the underlying
+            # ``allow_user_clarification`` toggle via ``/settings/allow-user-
+            # clarification`` mid-process, and this must reflect that on the
+            # very next call, no restart.
+            can_clarify=stack.has_live_model
+            and stack.can_stream
+            and get_allow_user_clarification(
+                stack.corpus_root, stack.settings.allow_user_clarification
+            ),
+            # UtkuAI Phase 1b: a static settings passthrough (no live override,
+            # unlike can_clarify above) — the admin sets it in governed_bi.toml.
+            ui_display_mode=stack.settings.ui_display_mode,
         )
+
+    @app.post(
+        "/settings/allow-user-clarification",
+        response_model=AllowUserClarificationResponse,
+        tags=["meta"],
+    )
+    def set_allow_user_clarification_route(
+        req: AllowUserClarificationRequest,
+    ) -> AllowUserClarificationResponse:
+        """Flip the live ``allow_user_clarification`` override (Round D3), gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``. Effective on the very next
+        request — no restart — because every real gating point (this app's
+        ``/capabilities`` and ``/clarifications/{id}/answer``, and the streaming
+        chat graph's per-turn ``ask_user`` decision) re-checks the live value fresh
+        instead of the frozen ``Settings.allow_user_clarification``."""
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+        set_allow_user_clarification(stack.corpus_root, req.enabled)
+        return AllowUserClarificationResponse(allow_user_clarification=req.enabled)
 
     @app.get("/", include_in_schema=False)
     def root() -> dict:
@@ -288,15 +330,178 @@ def create_app(stack: ServeStack | None = None):
     def corpus_assets(
         asset_type: AssetTypeFilter | None = Query(None, alias="type"),
     ) -> list[AssetRowResponse]:
-        """Non-table assets (metrics/terms/joins/rules/few-shots/negatives)."""
+        """Non-table assets (metrics/terms/joins/notes/few-shots/negatives)."""
         types = {asset_type} if asset_type else None
         rows = presenter.asset_rows(stack.corpus_full, asset_types=types)
         return [AssetRowResponse.model_validate(r) for r in rows]
 
-    @app.get("/skills", response_model=list[SkillResponse], tags=["corpus"])
-    def skills() -> list[SkillResponse]:
-        """Curated skills (rendered markdown bodies)."""
-        return [SkillResponse.model_validate(s) for s in presenter.skill_views(stack.corpus_full)]
+    @app.get(
+        "/corpus/assumptions", response_model=list[AssumptionRowResponse], tags=["corpus"]
+    )
+    def corpus_assumptions() -> list[AssumptionRowResponse]:
+        """Admin-answered clarifications folded into the corpus (Round 9).
+
+        Filtered to ``NoteAsset``s that carry ``source_question`` — set only
+        when the note was folded from an answered ``ClarificationRecord`` (see
+        ``AssetBag.record_caveats``). A readable question→answer log for "what
+        has an admin agreed to," distinct from the raw ``/corpus/assets`` editor
+        list. Reloaded from disk each call (see ``/corpus/assets`` docstring) so
+        an answer folded moments ago by this same process is visible immediately.
+        """
+        from ..corpus import load_corpus
+
+        rows = presenter.assumption_rows(load_corpus(stack.corpus_root))
+        return [AssumptionRowResponse.model_validate(r) for r in rows]
+
+    @app.get(
+        "/corpus/conflicts", response_model=list[ConflictRowResponse], tags=["corpus"]
+    )
+    def corpus_conflicts(
+        status: str | None = Query(
+            None, description="Filter by status, e.g. 'unresolved'"
+        ),
+    ) -> list[ConflictRowResponse]:
+        """Round C: clarifications whose Enhancer decision CONTRADICTED an
+        existing NoteAsset/MetricAsset — distinct from the calm, settled
+        ``/corpus/assumptions`` log. Includes both unresolved and resolved
+        conflicts (``status`` filters); reloaded from disk each call, same as
+        ``/corpus/assumptions``.
+        """
+        from ..corpus import load_corpus
+
+        rows = presenter.conflict_rows(load_corpus(stack.corpus_root))
+        if status is not None:
+            rows = [r for r in rows if r.status == status]
+        return [ConflictRowResponse.model_validate(r) for r in rows]
+
+    @app.post(
+        "/corpus/conflicts/{conflict_id}/resolve",
+        response_model=ConflictResolveResponse,
+        tags=["corpus"],
+    )
+    def resolve_conflict(
+        conflict_id: str, req: ConflictResolveRequest
+    ) -> ConflictResolveResponse:
+        """Admin resolution for one Round-C conflict (gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``). ``resolution=
+        "keep_existing"`` discards the conflicting answer; ``"replace"``
+        overwrites the existing asset's definition with it and certifies it.
+        404 on an unknown/non-conflict id.
+        """
+        from ..corpus import load_corpus
+        from ..corpus.schemas import NoteAsset, TableAsset
+        from ..curator.asset_bag import AssetBag
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        current = load_corpus(stack.corpus_root)
+        note = current.by_id(conflict_id)
+        if not isinstance(note, NoteAsset) or note.conflict_status is None:
+            raise HTTPException(
+                status_code=404, detail=f"unknown conflict id={conflict_id!r}"
+            )
+
+        schema = _corpus_subtree_for_asset(note, stack.corpus_root, current)
+        if schema is None:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot determine corpus/<schema>/ subtree for this conflict",
+            )
+
+        schema_corpus = load_corpus(stack.corpus_root, schema=schema)
+        tables = [a for a in schema_corpus.assets if isinstance(a, TableAsset)]
+        other = [a for a in schema_corpus.assets if not isinstance(a, TableAsset)]
+        bag = AssetBag.from_tables(schema, tables)
+        for asset in other:
+            if asset.asset_type == "metric":
+                bag.metrics[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "note":
+                bag.notes[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "join":
+                bag.joins[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "term":
+                bag.terms[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "few_shot":
+                bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+
+        msg = bag.resolve_conflict(
+            conflict_id, req.resolution, answered_by=req.answered_by
+        )
+        if not msg.startswith("ok:"):
+            raise HTTPException(status_code=422, detail=msg)
+        bag.write(stack.corpus_root)
+
+        resolved_note = bag.notes[conflict_id]
+        return ConflictResolveResponse(
+            resolved=True,
+            conflict_id=conflict_id,
+            status=resolved_note.conflict_status or "unresolved",
+            detail=msg,
+        )
+
+    @app.post(
+        "/corpus/drafts/{draft_id}/approve",
+        response_model=DraftApproveResponse,
+        tags=["corpus"],
+    )
+    def approve_draft(draft_id: str, req: DraftApproveRequest) -> DraftApproveResponse:
+        """Admin approval for a note written by ``AssetBag._record_draft`` (an
+        Enhancer-decided new concept held back because
+        ``allow_user_clarification`` is off — gated on ``capabilities.can_edit``
+        like ``/corpus/edit``). Certifies the note and clears
+        ``governance.excluded``, so it reaches the Analyst's prompt going
+        forward. Distinct from ``/corpus/conflicts/{id}/resolve``: a draft has
+        no existing asset to replace. 404 on an unknown/non-draft id.
+        """
+        from ..corpus import load_corpus
+        from ..corpus.schemas import NoteAsset, TableAsset
+        from ..curator.asset_bag import AssetBag
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        current = load_corpus(stack.corpus_root)
+        note = current.by_id(draft_id)
+        if (
+            not isinstance(note, NoteAsset)
+            or note.governance is None
+            or not note.governance.excluded
+            or note.conflict_status is not None
+        ):
+            raise HTTPException(
+                status_code=404, detail=f"unknown draft id={draft_id!r}"
+            )
+
+        schema = _corpus_subtree_for_asset(note, stack.corpus_root, current)
+        if schema is None:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot determine corpus/<schema>/ subtree for this draft",
+            )
+
+        schema_corpus = load_corpus(stack.corpus_root, schema=schema)
+        tables = [a for a in schema_corpus.assets if isinstance(a, TableAsset)]
+        other = [a for a in schema_corpus.assets if not isinstance(a, TableAsset)]
+        bag = AssetBag.from_tables(schema, tables)
+        for asset in other:
+            if asset.asset_type == "metric":
+                bag.metrics[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "note":
+                bag.notes[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "join":
+                bag.joins[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "term":
+                bag.terms[asset.id] = asset  # type: ignore[assignment]
+            elif asset.asset_type == "few_shot":
+                bag.few_shots[asset.id] = asset  # type: ignore[assignment]
+
+        msg = bag.approve_draft(draft_id, answered_by=req.answered_by)
+        if not msg.startswith("ok:"):
+            raise HTTPException(status_code=422, detail=msg)
+        bag.write(stack.corpus_root)
+
+        return DraftApproveResponse(approved=True, draft_id=draft_id, detail=msg)
 
     @app.post("/corpus/edit", response_model=EditResponse, tags=["corpus"])
     def corpus_edit(req: EditRequest) -> EditResponse:
@@ -411,6 +616,177 @@ def create_app(stack: ServeStack | None = None):
             diff=diff,
         )
 
+    @app.get("/clarifications", response_model=list[ClarificationResponse], tags=["clarifications"])
+    def clarifications(
+        status: str | None = Query(None, description="Filter by record status, e.g. 'open'"),
+    ) -> list[ClarificationResponse]:
+        """The curator's SME clarification ledger (``clarifications.jsonl``), for
+        an admin to answer. ``status`` filters (default: all records)."""
+        from ..curator.clarifications import clarifications_path, load_clarifications
+
+        records = load_clarifications(clarifications_path(stack.corpus_root))
+        if status is not None:
+            records = [r for r in records if r.status.value == status]
+        return [ClarificationResponse.model_validate(r) for r in records]
+
+    @app.get(
+        "/elicitation/candidates",
+        response_model=list[ClarificationResponse],
+        tags=["clarifications"],
+    )
+    def elicitation_candidates() -> list[ClarificationResponse]:
+        """Phase 1 elicitation wizard candidates (open AND answered — the
+        wizard needs both to render its progress), i.e. every ledger record
+        with ``source="elicitation_wizard"``. Distinct from ``/clarifications``
+        (which defaults to every source, open by default) so the wizard's
+        fixed A > C+E > B > D grouping doesn't have to filter the curator's
+        general SME queue client-side."""
+        from ..curator.clarifications import clarifications_path, load_clarifications
+
+        records = load_clarifications(clarifications_path(stack.corpus_root))
+        wizard_records = [r for r in records if r.source == "elicitation_wizard"]
+        return [ClarificationResponse.model_validate(r) for r in wizard_records]
+
+    @app.post(
+        "/elicitation/generate",
+        response_model=ElicitationGenerateResponse,
+        tags=["clarifications"],
+    )
+    def elicitation_generate() -> ElicitationGenerateResponse:
+        """Scan the served schema and propose a conservative set of
+        category-tagged candidate questions (gated on ``capabilities.can_edit``
+        like every other ledger-writing route). Idempotent: a scope already
+        covered by an earlier run is not re-proposed."""
+        from ..corpus.schemas import TableAsset
+        from ..curator.clarifications import (
+            clarifications_path,
+            load_clarifications,
+            write_clarifications,
+        )
+        from ..curator.elicitation import generate_candidate_questions
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        path = clarifications_path(stack.corpus_root)
+        existing = load_clarifications(path)
+        tables = [a for a in stack.corpus_full.assets if isinstance(a, TableAsset)]
+
+        chat = None
+        if stack.chat_model is not None:
+            from ..llm.langchain_client import LangChainChatClient
+
+            chat = LangChainChatClient(stack.chat_model)
+
+        created = generate_candidate_questions(tables, existing=existing, chat=chat)
+        if created:
+            write_clarifications(path, [*existing, *created])
+        return ElicitationGenerateResponse(
+            created=[ClarificationResponse.model_validate(r) for r in created]
+        )
+
+    @app.post(
+        "/clarifications/{clarification_id}/answer",
+        response_model=ClarificationResponse,
+        tags=["clarifications"],
+    )
+    def answer_clarification(
+        clarification_id: str, req: ClarificationAnswerRequest
+    ) -> ClarificationResponse:
+        """Record an admin's answer to one open clarification (dev, gated on
+        ``capabilities.can_edit`` like ``/corpus/edit``). 404 on an unknown id.
+
+        Shared by the curator's general SME queue AND the Phase 1 elicitation
+        wizard — a category-tagged record (``rec.category`` set) has its final
+        ``answer`` text composed from the category's shape (picked column,
+        numeric value, exclusion checkbox, or checked value subset — see
+        ``curator.elicitation.compose_elicitation_answer_text``) before the
+        same fold below runs; an A-category answer additionally checks whether
+        it should auto-generate a D-category join-path follow-up.
+        """
+        from ..curator.clarifications import (
+            ClarificationRecordStatus,
+            clarifications_path,
+            load_clarifications,
+            next_clarification_id,
+            write_clarifications,
+        )
+        from ..curator.elicitation import (
+            compose_elicitation_answer_text,
+            maybe_generate_join_followup,
+        )
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+        if req.choice_id is None and req.choice_ids is None and req.answer is None:
+            raise HTTPException(
+                status_code=422, detail="one of choice_id, choice_ids, or answer is required"
+            )
+
+        path = clarifications_path(stack.corpus_root)
+        records = load_clarifications(path)
+        for i, rec in enumerate(records):
+            if rec.id == clarification_id:
+                final_answer = req.answer
+                if rec.category is not None:
+                    final_answer = compose_elicitation_answer_text(
+                        rec,
+                        choice_id=req.choice_id,
+                        choice_ids=req.choice_ids,
+                        freeform=req.answer,
+                    )
+                records[i] = rec.model_copy(
+                    update={
+                        "status": ClarificationRecordStatus.answered,
+                        "answer": final_answer,
+                        "answer_choice_id": req.choice_id,
+                        "answer_choice_ids": req.choice_ids,
+                        "answered_by": req.answered_by,
+                    }
+                )
+                if rec.category == "A" and req.choice_id:
+                    followup = maybe_generate_join_followup(rec, req.choice_id)
+                    if followup is not None:
+                        followup = followup.model_copy(
+                            update={"id": next_clarification_id(records)}
+                        )
+                        records.append(followup)
+                write_clarifications(path, records)
+                # Fold immediately rather than leaving this as a separate poll
+                # step (apply_answered_clarifications_to_corpus was previously
+                # CLI/script-only) — an admin answering here should see it land
+                # as an Agreed Assumption right away, not after a manual step.
+                if stack.datasource is not None:
+                    from ..curator.pipeline import apply_answered_clarifications_to_corpus
+
+                    chat = None
+                    if stack.chat_model is not None:
+                        from ..llm.langchain_client import LangChainChatClient
+
+                        chat = LangChainChatClient(stack.chat_model)
+                    try:
+                        apply_answered_clarifications_to_corpus(
+                            stack.corpus_root,
+                            stack.datasource.corpus_pin,
+                            chat=chat,
+                            # Live-checked (Round D3): flipping the toggle must
+                            # immediately change whether NEW answers auto-certify
+                            # or land as drafts, without a restart.
+                            certify=get_allow_user_clarification(
+                                stack.corpus_root, stack.settings.allow_user_clarification
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "auto-fold of answered clarification %s into the corpus failed; "
+                            "the answer is saved but not yet reflected as an assumption",
+                            clarification_id,
+                        )
+                records = load_clarifications(path)
+                answered = next(r for r in records if r.id == clarification_id)
+                return ClarificationResponse.model_validate(answered)
+        raise HTTPException(status_code=404, detail="unknown clarification id")
+
     @app.post("/chat", response_model=AnswerResponse, tags=["chat"])
     def chat(req: ChatRequest) -> AnswerResponse:
         """Answer one turn. Working memory is rebuilt from ``history`` (the API is
@@ -418,6 +794,7 @@ def create_app(stack: ServeStack | None = None):
         from ..gateway import Gateway
         from ..memory import InMemoryWorkingMemory
         from ..analyst.agent import answer_question_agent
+        from ..corpus import load_corpus
 
         if stack.chat_model is None:
             # Agent-only serve (ADR 0002): no deterministic offline fallback. Fail
@@ -436,10 +813,14 @@ def create_app(stack: ServeStack | None = None):
             raise HTTPException(status_code=503, detail="database unavailable")
         try:
             gateway = Gateway(connector)
+            # Reload per turn (same reasoning as graph_app.answer): a live-chat
+            # fold can write new Enhancer assets to stack.corpus_root mid-session,
+            # and this stateless-API's stack is built once at process startup.
+            corpus_analyst = load_corpus(stack.corpus_root).for_analyst()
             answer = answer_question_agent(
                 req.question,
                 stack.identity,
-                corpus=stack.corpus_analyst,
+                corpus=corpus_analyst,
                 gateway=gateway,
                 settings=stack.settings,
                 session_id=req.session_id,
@@ -456,6 +837,16 @@ def create_app(stack: ServeStack | None = None):
             raise HTTPException(status_code=500, detail="failed to answer the question")
         finally:
             connector.close()
+        if stack.settings.enable_mistake_memory:
+            from .live_mistake_memory import mine_live_mistake
+
+            mine_live_mistake(
+                stack,
+                stack.datasource.corpus_pin,
+                session_id=req.session_id,
+                question=req.question,
+                answer=answer,
+            )
         return AnswerResponse.model_validate(presenter.answer_view(answer))
 
     return app

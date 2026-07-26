@@ -1,0 +1,317 @@
+asset_type: table
+id: tbl_cybermarket_securitymonitoring
+schema: public
+physical_name: securitymonitoring
+columns:
+- physical_name: secmonregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - SECMON_EBN59
+  - SECMON_GYFA8
+  - SECMON_6NVR1
+  - SECMON_0WXD8
+  - SECMON_FWJ8I
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: securityauditstatus
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Fail
+  - Pass
+  - Pass
+  - Fail
+  - Warning
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vulntally
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 15
+  - 19
+  - 13
+  - 3
+  - 19
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: inctally
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 0
+  - 4
+  - 2
+  - 6
+  - 0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: securitymeasurecount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 12
+  - 13
+  - 0
+  - 8
+  - 6
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: encryptionstrength
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Standard
+  - Strong
+  - Military-grade
+  - Standard
+  - Military-grade
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: authenticationmethod
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Basic
+  - 2FA
+  - 2FA
+  - Multi-factor
+  - Multi-factor
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: sessionsecurityscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '89.48'
+  - '19.66'
+  - '53.33'
+  - '82.03'
+  - '5.94'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: dataprotectionlevel
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Basic
+  - Enhanced
+  - Basic
+  - Basic
+  - Enhanced
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: privprotscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '6.04'
+  - '48.97'
+  - '84.42'
+  - '69.04'
+  - '0.09'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: operationalsecurityscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '23.87'
+  - '79.58'
+  - '45.11'
+  - '97.78'
+  - '73.66'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fpprob
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.3000'
+  - '1.3000'
+  - '8.2000'
+  - '2.2000'
+  - '5.9000'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: alertsev
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - High
+  - High
+  - Critical
+  - High
+  - Medium
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: alertcategory
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Security
+  - Transaction
+  - Transaction
+  - Security
+  - Behavior
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: alertconfidencescore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.56'
+  - '1.62'
+  - '0.13'
+  - '0.09'
+  - '1.04'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: riskref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - RISK_MXF5J
+  - RISK_JUZR9
+  - RISK_MLVPK
+  - RISK_J3SD3
+  - RISK_1P8AQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: commref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - COMM_I21GC
+  - COMM_T18IA
+  - COMM_OU74A
+  - COMM_XGE6U
+  - COMM_G4SEQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: threat_analysis_metrics
+  physical_type: jsonb
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - anonymity_level: High
+    traceability_score: 76.954
+    ml_confidence_score: 75.757
+    pattern_matching_score: 75.63
+    anomaly_detection_score: 79.206
+    detection_evasion_score: 25.61
+    behavioral_analysis_score: 30.97
+    threat_intelligence_score: 73.84
+    event_correlation_strength: 89.174
+  - anonymity_level: Low
+    traceability_score: 59.172
+    ml_confidence_score: 21.196
+    pattern_matching_score: 75.5
+    anomaly_detection_score: 92.577
+    detection_evasion_score: 59.34
+    behavioral_analysis_score: 3.95
+    threat_intelligence_score: 61.17
+    event_correlation_strength: 24.63
+  - anonymity_level: Medium
+    traceability_score: 18.212
+    ml_confidence_score: 67.884
+    pattern_matching_score: 30.63
+    anomaly_detection_score: 65.344
+    detection_evasion_score: 49.26
+    behavioral_analysis_score: 68.89
+    threat_intelligence_score: 3.99
+    event_correlation_strength: 59.875
+  - anonymity_level: High
+    traceability_score: 18.14
+    ml_confidence_score: 91.344
+    pattern_matching_score: 27.36
+    anomaly_detection_score: 83.03
+    detection_evasion_score: 34.6
+    behavioral_analysis_score: 37.89
+    threat_intelligence_score: 30.45
+    event_correlation_strength: 21.752
+  - anonymity_level: High
+    traceability_score: 26.991
+    ml_confidence_score: 49.058
+    pattern_matching_score: 67.06
+    anomaly_detection_score: 73.73
+    detection_evasion_score: 90.7
+    behavioral_analysis_score: 90.32
+    threat_intelligence_score: 20.92
+    event_correlation_strength: 54.836
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

@@ -37,12 +37,16 @@ class CapabilitiesResponse(_View):
     can_scope: bool  # whether the summary/detail/scoping schema routes are served
     can_search: bool  # whether a server-side FTS endpoint exists (False: client Fuse)
     can_clarify: bool = False  # whether serve-time HITL (ask_user interrupts) is available
+    # "audit" (default, unchanged today) | "simple" — the UtkuAI business-user
+    # view. The payload is identical either way; this only tells the frontend
+    # which default rendering to start on (it may still let the user reveal
+    # the audit view client-side without a re-fetch).
+    ui_display_mode: str = "audit"
 
 
 # ── health ────────────────────────────────────────────────────────────────── #
 class HealthResponse(_View):
     counts: dict[str, int]
-    n_skills: int
     n_suspect_columns: int
     n_excluded: int
     n_low_confidence_joins: int
@@ -173,7 +177,7 @@ class SchemaGraphResponse(_View):
 # ── knowledge graph (full corpus) ─────────────────────────────────────────── #
 class KnowledgeGraphNodeResponse(_View):
     id: str
-    kind: str  # table | join | metric | term | rule | few_shot | negative_example
+    kind: str  # table | join | metric | term | note | few_shot | negative_example
     label: str
     excluded: bool
     provenance_status: str | None
@@ -263,11 +267,11 @@ class ColumnRelatedResponse(_View):
     meta: ColumnRelatedMetaResponse
 
 
-# ── corpus assets + skills ────────────────────────────────────────────────── #
+# ── corpus assets ─────────────────────────────────────────────────────────── #
 # The selectable non-table asset types (tables have their own /schema view). Used
 # to constrain the /corpus/assets ?type= filter so unknown values 422 and the
 # valid set is published in the OpenAPI schema.
-AssetTypeFilter = Literal["join", "metric", "term", "rule", "few_shot", "negative_example"]
+AssetTypeFilter = Literal["join", "metric", "term", "note", "few_shot", "negative_example"]
 
 
 class AssetRowResponse(_View):
@@ -278,11 +282,56 @@ class AssetRowResponse(_View):
     excluded: bool
 
 
-class SkillResponse(_View):
-    skill_id: str
-    kind: str
-    namespace: str = _NAMESPACE
-    body: str
+# ── admin "agreed assumptions" log (Round 9) ────────────────────────────────── #
+class AssumptionRowResponse(_View):
+    id: str
+    question: str
+    answer: str
+    answered_by: str | None
+    answered_at: str | None
+    source: str | None
+
+
+# ── Round C: unresolved/resolved conflicts (distinct from Agreed Assumptions) ─ #
+class ConflictRowResponse(_View):
+    id: str
+    status: str  # "unresolved" | "resolved_kept_existing" | "resolved_replaced"
+    existing_asset_id: str
+    existing_asset_type: str  # "note" | "metric" | "unknown"
+    existing_text: str
+    existing_question: str | None
+    new_question: str | None
+    new_text: str
+    answered_by: str | None
+    created_at: str | None
+    source: str | None
+
+
+class ConflictResolveRequest(BaseModel):
+    """Body for ``POST /corpus/conflicts/{id}/resolve``."""
+
+    resolution: Literal["keep_existing", "replace"]
+    answered_by: str = "admin"
+
+
+class ConflictResolveResponse(BaseModel):
+    resolved: bool
+    conflict_id: str
+    status: str
+    detail: str
+
+
+# ── allow_user_clarification=False draft approval (AssetBag.approve_draft) ── #
+class DraftApproveRequest(BaseModel):
+    """Body for ``POST /corpus/drafts/{id}/approve``."""
+
+    answered_by: str = "admin"
+
+
+class DraftApproveResponse(BaseModel):
+    approved: bool
+    draft_id: str
+    detail: str
 
 
 # ── chat ──────────────────────────────────────────────────────────────────── #
@@ -336,3 +385,59 @@ class EditResponse(BaseModel):
     path: str | None  # repo-relative path written (null when not written)
     findings: list[str]  # reference-integrity findings (empty = clean)
     diff: str  # unified diff of the YAML file (old vs new)
+
+
+# ── clarifications (admin HITL over the curator's clarifications.jsonl) ──── #
+class ClarificationResponse(_View):
+    id: str
+    scope: str
+    question: str
+    status: str  # "open" | "answered"
+    raised_by: list[str]
+    choices: list[dict[str, str]] | None  # each: {"id": ..., "label": ...}
+    allow_freeform: bool
+    answer: str | None
+    answer_choice_id: str | None
+    answer_choice_ids: list[str] | None = None
+    answered_by: str | None
+    source: str  # "curator" | "live_chat" | "elicitation_wizard"
+    # Phase 1 elicitation wizard fields (None for curator/live_chat records).
+    category: str | None = None  # "A" | "B" | "C" | "D" | "E"
+    ui_modality: str | None = None  # "column_picker" | "numeric" | "checkbox" | "checklist"
+    target_table: str | None = None
+    target_column: str | None = None
+
+
+class ClarificationAnswerRequest(BaseModel):
+    """Body for ``POST /clarifications/{id}/answer``. Either ``choice_id``,
+    ``choice_ids`` (elicitation wizard category B's multi-select checklist), or
+    ``answer`` may be set; at least one is required (enforced in the route, not
+    here, so the 422 vs 400 distinction stays in one place)."""
+
+    choice_id: str | None = None
+    choice_ids: list[str] | None = None
+    answer: str | None = None
+    answered_by: str = "admin"
+
+
+# ── Phase 1 elicitation wizard (proactive admin onboarding, before any live
+# business-user question) ─────────────────────────────────────────────────── #
+class ElicitationGenerateResponse(BaseModel):
+    """Response for ``POST /elicitation/generate``: the newly proposed
+    candidate questions (already appended to the ledger as open,
+    ``source="elicitation_wizard"`` records). Idempotent — a scope already
+    covered by an earlier wizard run is not re-proposed, so calling this again
+    with nothing new to ask returns an empty list."""
+
+    created: list[ClarificationResponse]
+
+
+# ── live allow_user_clarification override (gated on capabilities.can_edit) ── #
+class AllowUserClarificationRequest(BaseModel):
+    """Body for ``POST /settings/allow-user-clarification``."""
+
+    enabled: bool
+
+
+class AllowUserClarificationResponse(BaseModel):
+    allow_user_clarification: bool  # the new live value, effective immediately

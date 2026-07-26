@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from langchain.agents import create_agent
@@ -24,6 +25,7 @@ from ..corpus.schemas import TableAsset
 from ..gateway import column_allowlist
 from ..graph import build_graph, detect_missing_join_path, plan_joins
 from ..obs import tracing_callbacks
+from .middleware import _supports_parallel_tool_calls
 from ..retrieval import (
     embed_schema_documents,
     expand_schemas_via_curated_joins,
@@ -47,6 +49,7 @@ from .governance import (
     missing_edge_refusal,
     narrate_answer,
 )
+from .run_log import FinalizeCtx, amend_run_tokens, finalize_and_log, new_run_id
 from .middleware import (
     AGENT_RECURSION_LIMIT,
     GovernanceHardStop,
@@ -57,10 +60,11 @@ from .middleware import (
 from .clarify import new_clarification_id, parse_response
 from .routing import bind_terms, route_intent
 from .sqlgen import GeneratedSql, _tables_used
-from .tools import make_tools
+from .tools import CLARIFY_DEFERRED, make_tools
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from ..config import Settings
     from ..corpus import Corpus
@@ -86,6 +90,16 @@ and `inspect_schema` any table **not** already listed before querying it (that \
 licenses it). Use `sample_rows` if you need to see real values. If `run_query` \
 returns BLOCKED or an error, read it, fix the SQL, and retry (max 3). Never guess \
 an identifier. Call tools **one at a time**.
+
+If `ask_user` tells you no answer is available yet and to proceed on your own \
+judgment, do so for that specific point only — and in your final answer, \
+explicitly call out that assumption as unconfirmed and pending admin review \
+(e.g. "assuming X, which is unconfirmed — ...").
+
+When you call `ask_user` and can name 2-4 concrete candidate answers (specific \
+columns, tables, or formulas you found while inspecting the schema/corpus), pass \
+them as `choices` so the user can pick one instead of typing it; leave `choices` \
+out for genuinely open-ended questions.
 """
 
 _ESCALATION_CLARIFY_DECLINED = (
@@ -107,9 +121,17 @@ class ClarificationPending:
 
 
 def _extract_clarifications(messages: list | None) -> list[dict]:
-    """Recover the turn's answered clarifications from the inner agent's final
-    messages, pairing each ``ask_user`` call with its answer ToolMessage. Robust to
-    multiple clarifications in one turn (provenance, contract §7)."""
+    """Recover the turn's resolved clarifications from the inner agent's final
+    messages, pairing each ``ask_user`` call with its resulting ToolMessage.
+    Robust to multiple clarifications in one turn (provenance, contract §7).
+
+    A resolution is either an **answer** (``answered_by: "user"``) or a
+    **defer** (``deferred: True``, ``answered_by: "deferred"`` — the
+    ``ask_user`` tool returned :data:`.tools.CLARIFY_DEFERRED`, the agent
+    proceeded on its own judgment for that point). A decline never reaches
+    here — the outer rails hard-stop before the agent runs again, so no
+    ToolMessage for it exists in ``messages``.
+    """
     asks: dict[str, dict] = {}
     for m in messages or []:
         if isinstance(m, AIMessage):
@@ -120,14 +142,17 @@ def _extract_clarifications(messages: list | None) -> list[dict]:
     for m in messages or []:
         if isinstance(m, ToolMessage) and getattr(m, "tool_call_id", None) in asks:
             question = asks[m.tool_call_id].get("question", "")
-            out.append(
-                {
-                    "clarification_id": new_clarification_id(question),
-                    "question": question,
-                    "answer": str(m.content),
-                    "answered_by": "user",
-                }
-            )
+            content = str(m.content)
+            deferred = content == CLARIFY_DEFERRED
+            entry = {
+                "clarification_id": new_clarification_id(question),
+                "question": question,
+                "answer": content,
+                "answered_by": "deferred" if deferred else "user",
+            }
+            if deferred:
+                entry["deferred"] = True
+            out.append(entry)
     return out
 
 
@@ -160,6 +185,27 @@ def _physical_to_id_map(corpus: "Corpus") -> dict[str, str]:
     return out
 
 
+def _build_enhancer_chat_model(settings: "Settings") -> Any | None:
+    """Fresh, independently-constructed raw chat model for the Enhancer's
+    one-shot fold judgment call (see ``tools._fold_answered_clarifications``).
+
+    Deliberately NOT the same model instance driving the main agent turn: that
+    instance is a single object shared/threaded across the whole turn's
+    conversational loop, and an extra side-channel call on it could desync any
+    model wrapper with per-call state (a scripted test double today; a real
+    reasoning-trace/rate-limit/caching wrapper conceivably tomorrow). Same
+    construction path ``api/stack.py``'s ``_build_model_stack`` already uses.
+    Non-fatal: returns ``None`` on any failure, which makes the fold fall back
+    to the legacy verbatim-note behavior (see ``EnhancerError`` handling).
+    """
+    try:
+        from ..llm import LangChainChatClient
+
+        return LangChainChatClient.from_config(settings.models).model
+    except Exception:
+        return None
+
+
 def build_agent_core(
     corpus: "Corpus",
     gateway: "Gateway",
@@ -173,19 +219,40 @@ def build_agent_core(
     system_prompt: str = SYSTEM_PROMPT,
     enable_clarify: bool = False,
     checkpointer: Any = None,
+    corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
 ):
     """Assemble ``create_agent`` with governed tools + middleware.
 
     ``enable_clarify`` adds the ``ask_user`` HITL tool and requires ``checkpointer``
     (``interrupt`` needs one to pause/resume). Both default off, so the
     eval/offline path builds the identical agent it always has.
+
+    ``corpus_root``, when given, lets ``ask_user`` durably log live questions to
+    the curator clarifications ledger (see ``make_tools``); ``None`` skips that.
+
+    ``enhancer_chat_model``, when given, is used as-is for the fold Enhancer's
+    model instead of building a fresh one from ``settings`` (see
+    ``_build_enhancer_chat_model``) — production leaves this ``None`` (the
+    fresh-from-``Settings`` build is always distinct from ``model``); tests use
+    it to inject a fake/stub model for the Enhancer path.
     """
+    if enable_clarify:
+        enhancer_model = (
+            enhancer_chat_model
+            if enhancer_chat_model is not None
+            else _build_enhancer_chat_model(settings)
+        )
+    else:
+        enhancer_model = None
     tools = make_tools(
         corpus,
         gateway,
         identity,
         embedder=embedder,
         enable_clarify=enable_clarify,
+        corpus_root=corpus_root,
+        enhancer_chat_model=enhancer_model,
     )
     mw = GovernanceMiddleware(
         corpus,
@@ -197,18 +264,25 @@ def build_agent_core(
     )
     # Sequential tools: also bind at construction; middleware re-asserts per call (G1).
     bound_model = model
-    if hasattr(model, "bind") and not isinstance(getattr(model, "responses", None), list):
+    if (
+        hasattr(model, "bind")
+        and _supports_parallel_tool_calls(model)
+        and not isinstance(getattr(model, "responses", None), list)
+    ):
         try:
             bound_model = model.bind(parallel_tool_calls=False)
         except Exception:
             bound_model = model
-    return create_agent(
+    return_agent = create_agent(
         model=bound_model,
         tools=tools,
         middleware=[mw],
         system_prompt=system_prompt,
         checkpointer=checkpointer,
     )
+    # L4: agent_core drains failed_model_calls after a raised model call.
+    return_agent._gov_middleware = mw  # type: ignore[attr-defined]
+    return return_agent
 
 
 def extract_final_sql(
@@ -249,6 +323,11 @@ def build_serve_rails(
     clarify_checkpointer: Any = None,
     clarify_thread: str | None = None,
     clarify_resume: Any = None,
+    run_id: str | None = None,
+    n_human: int = 1,
+    corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
+    system_prompt_suffix: str | None = None,
 ):
     """Compile the outer deterministic StateGraph wrapping the agent core.
 
@@ -257,7 +336,20 @@ def build_serve_rails(
     agent on that checkpointer + ``clarify_thread`` so ``ask_user``'s ``interrupt``
     can pause/resume. ``clarify_resume`` (a ``ClarificationResponse``) resumes a
     paused inner agent. All three default off/None, leaving the eval path
-    byte-for-byte unchanged."""
+    byte-for-byte unchanged.
+
+    ``enhancer_chat_model``, when given, overrides ``build_agent_core``'s default
+    of building a fresh Enhancer model from ``Settings`` — tests use this to
+    inject a distinct fake/stub model for the Enhancer's fold call, so it is
+    verifiably NOT the same instance as ``model`` (the main-turn model) without
+    making a real Enhancer call hit a live provider.
+
+    ``system_prompt_suffix``, when given, is appended to the assembled system
+    prompt (default SYSTEM_PROMPT + governed context + current time) before the
+    agent core is built. Eval-only knob (Round-2 candidate-pool prompt-style
+    diversity, ``eval/candidates.py``) — ``None`` (the default) leaves the
+    live-serve prompt byte-for-byte unchanged.
+    """
     # Bare references resolve to the serving schema (the SQLite ATTACH alias, or the
     # pinned Postgres schema); None means the source spans every schema, so a bare
     # reference fails closed.
@@ -307,7 +399,21 @@ def build_serve_rails(
     # emits the {seq,kind,step,status,detail} contract, never the legacy {stage}
     # shape governance.py's on_event helpers still accept but which agent.py never
     # feeds a callback into (docs/plans/agent-step-visualization.md).
-    events = GovEventStream(on_event)
+    _run_id = run_id or new_run_id()
+    _t0 = time.perf_counter()
+    _finalize_ctx = FinalizeCtx(
+        settings=settings,
+        run_id=_run_id,
+        thread_id=session_id,
+        n_human=n_human,
+        model=getattr(settings.models, "llm_model", None),
+        serve_path="agent",
+        t0=_t0,
+    )
+    events = GovEventStream(on_event, finalize_ctx=_finalize_ctx)
+    # Per-invoke turn counter so a reused rails graph (eval agent_solver) mints a
+    # fresh turn_id / run_id each question instead of UPSERT-colliding on eval:1.
+    _turn_n = [n_human - 1]
 
     def _column_count(table_id: str) -> int:
         asset = corpus.by_id(table_id)
@@ -326,7 +432,17 @@ def build_serve_rails(
 
     def ingest(state: ServeRailsState) -> dict:
         events.reset()  # new turn: fresh seq + serve_path tag
+        _turn_n[0] += 1
         question = state["question"]
+        if events._finalize_ctx is not None:
+            events._finalize_ctx = replace(
+                events._finalize_ctx,
+                run_id=new_run_id(),
+                n_human=_turn_n[0],
+                t0=time.perf_counter(),
+                token_usage=[],
+                question=question,
+            )
         route = route_intent(question)
         bound_terms = bind_terms(corpus, question)
         base = {
@@ -354,7 +470,7 @@ def build_serve_rails(
                     "negative_example": negative.id,
                 },
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         events.rail("refuse_gate", "ok")
         return {"outcome": "continue"}
@@ -388,10 +504,16 @@ def build_serve_rails(
                 top_k=route_top_k,
                 embedder=embedder,
                 schema_vectors=router_schema_vectors,
+                settings=settings,
             )
             picked: str | None = None
             if router_chat is not None and shortlisted:
                 picked = select_schema(corpus, question, shortlisted, chat=router_chat)
+                usage = getattr(router_chat, "last_usage_metadata", None)
+                if usage:
+                    events.add_token_usage(
+                        [{"source": "router", "usage_metadata": usage}]
+                    )
                 routed = (
                     frozenset([picked])
                     if picked
@@ -407,7 +529,7 @@ def build_serve_rails(
                 "total_schemas": len(_corpus_schemas),
                 "schema_pick": picked,
             }
-        retrieval = retrieve(retrieval_corpus, question, embedder=embedder)
+        retrieval = retrieve(retrieval_corpus, question, embedder=embedder, settings=settings)
         missing = detect_missing_join_path(
             corpus, graph_obj, set(retrieval.table_ids)
         )
@@ -416,7 +538,7 @@ def build_serve_rails(
                 "assemble", "refused", missing_edge=True, schemas=sorted(missing.schemas)
             )
             ans = missing_edge_refusal(base_provenance, missing)
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         try:
             licensing_join_ids = plan_joins(graph_obj, set(retrieval.table_ids)).join_ids
@@ -428,6 +550,9 @@ def build_serve_rails(
             retrieval,
             licensed_table_ids=licensed_ids,
             history=history,
+            db_name=settings.datasource.db,
+            always_note_global_max=settings.always_note_global_max,
+            always_note_char_max=settings.always_note_char_max,
         )
         events.rail(
             "assemble",
@@ -467,7 +592,7 @@ def build_serve_rails(
         )
         if hit is not None:
             events.rail("cache", "hit", metric_id=hit.provenance.get("metric_id"))
-            events.final(hit)
+            hit = events.final(hit)
             return {"answer": hit, "outcome": "finalize"}
         return {"outcome": "miss"}
 
@@ -630,6 +755,8 @@ def build_serve_rails(
             f"The current date and time is {now_local.strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)')} "
             f"(the user's local time). Resolve any relative dates in the question against it."
         )
+        if system_prompt_suffix:
+            system_prompt = f"{system_prompt}\n\n{system_prompt_suffix}"
 
         clarify_on = clarify_checkpointer is not None
         agent = build_agent_core(
@@ -644,6 +771,8 @@ def build_serve_rails(
             system_prompt=system_prompt,
             enable_clarify=clarify_on,
             checkpointer=clarify_checkpointer,
+            corpus_root=corpus_root,
+            enhancer_chat_model=enhancer_chat_model,
         )
 
         # One tracing handler per turn: it is attached at the outer graph.invoke
@@ -671,6 +800,11 @@ def build_serve_rails(
                     return {"outcome": "clarify", "clarification": request}
                 parsed = parse_response(clarify_resume)
                 if parsed["declined"]:
+                    # Decline (unchanged, Round 6): hard-stop here — the inner
+                    # agent never runs again this turn. A *defer* (parsed["deferred"])
+                    # is NOT declined, so it falls through to the resume below
+                    # exactly like an answer: the inner agent's ask_user sees
+                    # CLARIFY_DEFERRED and keeps reasoning to completion (Round 7).
                     ledger = list((snap.values or {}).get("ledger") or [])
                     ans = refusal(
                         escalation=_ESCALATION_CLARIFY_DECLINED,
@@ -681,14 +815,23 @@ def build_serve_rails(
                             "governance_ledger": ledger,
                         },
                     )
-                    events.final(ans)
+                    ans = events.final(ans)
                     return {"answer": ans, "outcome": "refuse"}
                 # Resume the paused inner agent with the user's answer.
                 agent_input = Command(resume=clarify_resume)
 
         try:
             final = _stream_agent(agent, agent_input, inner_cfg)
+            events.add_token_usage(final.get("token_usage"))
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
         except GovernanceHardStop as e:
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
             ledger = list(e.ledger)
             entry = e.entry
             ans = refusal(
@@ -702,7 +845,7 @@ def build_serve_rails(
                     "governance_ledger": ledger,
                 },
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
         except GraphRecursionError as e:
             # Step budget exhausted without a final answer → fail closed (§6),
@@ -736,7 +879,24 @@ def build_serve_rails(
                 dialect=dialect,
                 default_schema=default_schema,
             )
-            events.final(ans)
+            ans = events.final(ans)
+            return {"answer": ans, "outcome": "refuse"}
+        except Exception as e:
+            # L4: model/call failure — drain failed-call stubs and still emit one
+            # portable record (metadata-only; no exception message text).
+            mw = getattr(agent, "_gov_middleware", None)
+            if mw is not None and mw.failed_model_calls:
+                events.add_token_usage(mw.failed_model_calls)
+                mw.failed_model_calls.clear()
+            ans = refusal(
+                escalation=_ESCALATION_NO_COVERAGE,
+                provenance={
+                    **state["base_provenance"],
+                    "refused_by": "model_error",
+                    "error_type": type(e).__name__,
+                },
+            )
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         # Local provenance copy — never mutate the input state in place (a LangGraph
@@ -744,17 +904,22 @@ def build_serve_rails(
         # bite once a checkpointer or a parallel branch is added). Finalizers below
         # read this local.
         base_provenance = state["base_provenance"]
+        deferred_this_turn = False
         if clarify_on:
             # The inner agent may have paused on a fresh ask_user this pass; bubble
             # it up so the chat-graph node surfaces it as a client interrupt.
             snap2 = agent.get_state(inner_cfg)
             if snap2.next and getattr(snap2, "interrupts", None):
                 return {"outcome": "clarify", "clarification": snap2.interrupts[0].value}
-            # Otherwise fold the turn's answered clarifications into provenance (§7),
+            # Otherwise fold the turn's resolved clarifications into provenance (§7),
             # so both success and refusal finalizers below carry them.
             answered = _extract_clarifications(final.get("messages"))
             if answered:
                 base_provenance = {**base_provenance, "clarifications": answered}
+                # A deferred clarification means the turn proceeded on an
+                # unconfirmed assumption — lowers the reliability stamp below
+                # (structural flag, not just prose; Round 7).
+                deferred_this_turn = any(c.get("deferred") for c in answered)
 
         ledger = list(final.get("ledger") or [])
         sql, tables_used, pass_entry = extract_final_sql(
@@ -797,7 +962,7 @@ def build_serve_rails(
                     ans,
                     provenance={**ans.provenance, "governance_ledger": ledger},
                 )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         result = result_from_ledger(pass_entry)
@@ -823,7 +988,7 @@ def build_serve_rails(
                 dialect=dialect,
                 default_schema=default_schema,
             )
-            events.final(ans)
+            ans = events.final(ans)
             return {"answer": ans, "outcome": "refuse"}
 
         generated = GeneratedSql(
@@ -848,8 +1013,9 @@ def build_serve_rails(
             narrator=None,  # narration deferred to narrate_node
             on_event=None,
             ledger=ledger,
+            deferred_clarification=deferred_this_turn,
         )
-        events.final(ans)
+        ans = events.final(ans)
         return {"answer": ans, "outcome": "finalize"}
 
     def narrate_node(state: ServeRailsState) -> dict:
@@ -863,8 +1029,22 @@ def build_serve_rails(
         if answer is None:
             return {}
         narrated = narrate_answer(answer, state["question"], narrator)
+        # Only fold narrator tokens when the narrator actually ran. On refusals
+        # narrate_answer returns the same object without calling the model — do
+        # not read a stale last_usage_metadata from a prior success turn.
         if narrated is answer:
             return {}
+        chat = getattr(narrator, "_chat", None) or getattr(narrator, "chat", None)
+        usage = getattr(chat, "last_usage_metadata", None) if chat is not None else None
+        if usage:
+            narrated = amend_run_tokens(
+                narrated,
+                settings=settings,
+                extra_usage=[{"source": "narrator", "usage_metadata": usage}],
+                model=getattr(settings.models, "llm_model", None),
+            )
+            if chat is not None:
+                chat.last_usage_metadata = None
         return {"answer": narrated}
 
     builder = StateGraph(ServeRailsState)
@@ -901,6 +1081,10 @@ def answer_question_agent(
     clarify_checkpointer: Any = None,
     clarify_thread: str | None = None,
     clarify_resume: Any = None,
+    run_id: str | None = None,
+    n_human: int = 1,
+    corpus_root: "Path | None" = None,
+    enhancer_chat_model: Any | None = None,
 ) -> "Answer | ClarificationPending":
     """Run one question through the agentic serve rails.
 
@@ -908,7 +1092,16 @@ def answer_question_agent(
     inner agent paused on ``ask_user`` (HITL, contract §2). Clarification is active
     only when ``clarify_checkpointer`` is passed; the eval path calls this without
     it and always gets an ``Answer``.
+
+    ``corpus_root``, when given, is threaded to ``ask_user`` so it durably logs
+    every live question (and its answer) to the curator clarifications ledger.
+
+    ``enhancer_chat_model``, when given, overrides the default fresh-from-
+    ``Settings`` Enhancer model (see ``build_agent_core``) — production leaves
+    this ``None``; tests use it to inject a fake/stub model distinct from
+    ``model``.
     """
+    _run_id = run_id or new_run_id()
     graph = build_serve_rails(
         corpus=corpus,
         gateway=gateway,
@@ -924,6 +1117,10 @@ def answer_question_agent(
         clarify_checkpointer=clarify_checkpointer,
         clarify_thread=clarify_thread,
         clarify_resume=clarify_resume,
+        run_id=_run_id,
+        n_human=n_human,
+        corpus_root=corpus_root,
+        enhancer_chat_model=enhancer_chat_model,
     )
     final = graph.invoke(
         {
@@ -936,8 +1133,20 @@ def answer_question_agent(
         return ClarificationPending(final.get("clarification") or {})
     answer = final.get("answer")
     if answer is None:
-        return refusal(
+        ans = refusal(
             escalation=_ESCALATION_NO_COVERAGE,
             provenance={"refused_by": "no_coverage", "session_id": session_id},
+        )
+        return finalize_and_log(
+            ans,
+            ctx=FinalizeCtx(
+                settings=settings,
+                run_id=_run_id,
+                thread_id=session_id,
+                n_human=n_human,
+                model=getattr(settings.models, "llm_model", None),
+                outcome="refuse",
+                question=question,
+            ),
         )
     return answer

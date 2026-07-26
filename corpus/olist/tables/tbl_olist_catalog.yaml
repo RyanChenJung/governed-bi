@@ -1,0 +1,112 @@
+asset_type: table
+id: tbl_olist_catalog
+schema: olist
+physical_name: catalog
+columns:
+- physical_name: item_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 96bd76ec8810374ed1b65e291975717f
+  - cef67bcfe19066a932b7673e239eb23d
+  - 732bd381ad09e530fe0a5f457d81becb
+  - 2548af3e6e77a690cf3eb6368e9ab61e
+  - 37cc742be07708b53a98702e77a21a02
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: category_code
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - CAT_033
+  - CAT_010
+  - CAT_027
+  - CAT_055
+  - CAT_029
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: weight
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 154.0
+  - 371.0
+  - 18350.0
+  - 900.0
+  - 400.0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: length
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 18.0
+  - 26.0
+  - 70.0
+  - 40.0
+  - 27.0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: height
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 9.0
+  - 4.0
+  - 24.0
+  - 8.0
+  - 13.0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: width
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 15.0
+  - 26.0
+  - 44.0
+  - 40.0
+  - 17.0
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: sku
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - SKU-2566CF45
+  - SKU-F919B8A8
+  - SKU-67A4DE9B
+  - SKU-10F96774
+  - SKU-368E2138
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

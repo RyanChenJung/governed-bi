@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Protocol, Sequence, runtime_checkable
+from typing import Iterable, Literal, Protocol, Sequence, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -17,6 +17,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 class ClarificationRecordStatus(str, Enum):
     open = "open"
     answered = "answered"
+
+
+# Phase 1 elicitation wizard categories (utku-ai-phase2-spec.md "Phase 1
+# elicitation examples, by category"), fixed priority order A > C > E > B > D.
+# ``D`` (join paths) is never generated as a standalone candidate — see
+# ``curator.elicitation.maybe_generate_join_followup`` — but still tags the
+# auto-generated follow-up record so the UI/ledger can distinguish it.
+ElicitationCategory = Literal["A", "B", "C", "D", "E"]
+
+# UI widget the wizard renders for a category-tagged candidate question.
+# ``None`` (e.g. a D follow-up) falls back to the existing choice+freeform form.
+ElicitationUiModality = Literal["column_picker", "numeric", "checkbox", "checklist"]
 
 
 class ClarificationRecord(BaseModel):
@@ -29,8 +41,36 @@ class ClarificationRecord(BaseModel):
     question: str
     status: ClarificationRecordStatus = ClarificationRecordStatus.open
     raised_by: list[str] = Field(default_factory=list)
+    choices: list[dict[str, str]] | None = None
+    allow_freeform: bool = True
     answer: str | None = None
+    answer_choice_id: str | None = None
+    # Multi-select audit trail (category B's "checklist of real DB values" —
+    # a single ``answer_choice_id`` can't represent picking several). Not
+    # consumed by ``resolve_answer_text`` directly; the composed sentence is
+    # written into ``answer`` at answer time (see
+    # ``curator.elicitation.compose_elicitation_answer_text``).
+    answer_choice_ids: list[str] | None = None
     answered_by: str | None = None
+    converted_to_corpus: bool = False
+    # Where the record originated: the curator pipeline (offline SME hand-off,
+    # the pre-existing default), a live serve-time ``ask_user`` call logged
+    # for later admin follow-up, or the proactive Phase 1 elicitation wizard
+    # (admin onboarding, before any business user ever asks a live question).
+    # Defaults to "curator" so every pre-existing record/test round-trips
+    # unchanged.
+    source: Literal["curator", "live_chat", "elicitation_wizard"] = "curator"
+
+    # ── Phase 1 elicitation wizard fields (None for every pre-existing/
+    # non-wizard record) ──
+    category: ElicitationCategory | None = None
+    ui_modality: ElicitationUiModality | None = None
+    # Best-guess table this question concerns (A: the "expected" table used by
+    # the D join-path heuristic; C/E/B: the table the rule/exclusion/value-map
+    # concerns). ``target_column`` is set for B/E (a specific column); left
+    # unset for A/C, which concern a term or a schema-wide constant.
+    target_table: str | None = None
+    target_column: str | None = None
 
 
 CLARIFICATIONS_FILENAME = "clarifications.jsonl"
@@ -213,6 +253,35 @@ def fill_clarifications_with_responder(
             )
         )
     return out
+
+
+def resolve_answer_text(rec: ClarificationRecord) -> str | None:
+    """Resolve a record's structured answer into the text a corpus fold writes.
+
+    A picked choice's ``label`` is the primary text (a freeform ``answer`` set
+    alongside it — e.g. the C-type "picked a choice AND added freeform
+    context" shape — is appended for context). With no choice picked, the
+    freeform ``answer`` is used as-is. Returns ``None``/empty when the record
+    carries neither.
+
+    A category-tagged record (Phase 1 elicitation wizard) is the one
+    exception: its ``answer`` is already a fully composed, self-contained
+    sentence (see ``curator.elicitation.compose_elicitation_answer_text``,
+    written at answer time) — a bare picked-choice label like
+    ``"sales.total_amount"`` would lose the term/rule context that made the
+    label meaningful, so the label+freeform concatenation below is skipped.
+    """
+    if rec.category is not None:
+        return rec.answer
+    label: str | None = None
+    if rec.answer_choice_id and rec.choices:
+        for choice in rec.choices:
+            if choice.get("id") == rec.answer_choice_id:
+                label = choice.get("label")
+                break
+    if label and rec.answer:
+        return f"{label} — {rec.answer}"
+    return label or rec.answer
 
 
 def parse_scope(scope: str) -> tuple[str, str | None]:

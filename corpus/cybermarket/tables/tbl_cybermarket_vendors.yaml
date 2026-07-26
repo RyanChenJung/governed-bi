@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_cybermarket_vendors
+schema: public
+physical_name: vendors
+columns:
+- physical_name: vendregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - VEND_0DY9A
+  - VEND_2JDYC
+  - VEND_3EUJI
+  - VEND_JAI03
+  - VEND_HPORG
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendspan
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 319
+  - 26
+  - 179
+  - 229
+  - 39
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendrate
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '4.50'
+  - '4.10'
+  - '3.90'
+  - '3.70'
+  - '4.00'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendtxcount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 576887
+  - 683389
+  - 137303
+  - 943651
+  - 982354
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendsucccount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 428648
+  - 880175
+  - 264983
+  - 859194
+  - 227581
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: venddisputecount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 89535
+  - 26386
+  - 77677
+  - 24394
+  - 43274
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendplacecount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5
+  - 5
+  - 7
+  - 10
+  - 10
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendpaymethods
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 2
+  - 8
+  - 2
+  - 8
+  - 1
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendchecklvl
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Advanced
+  - Basic
+  - Advanced
+  - Basic
+  - Advanced
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendlastmoment
+  physical_type: date
+  logical_type: date
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2025-02-15'
+  - '2025-02-05'
+  - '2025-01-31'
+  - '2025-01-24'
+  - '2025-02-03'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - MKT_SOB5D
+  - MKT_3VNMP
+  - MKT_VTIB5
+  - MKT_3Y1WX
+  - MKT_QC5NK
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

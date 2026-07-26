@@ -2,7 +2,7 @@
 
 _[English](design-decisions.md) · [简体中文](design-decisions.zh.md)_
 
-面向[Agentic BI 系统](system-overview.zh.md)的已决策事项 D1-D16，并附上已考虑过的
+面向[Agentic BI 系统](system-overview.zh.md)的已决策事项 D1-D18，并附上已考虑过的
 备选方案与权衡。标记为**ADR 级**的决策难以逆转，请将其视为 ADR。
 
 ## D1：目标
@@ -570,3 +570,82 @@ _[English](design-decisions.md) · [简体中文](design-decisions.zh.md)_
   R8（两套澄清表示、两条策展器编排路径、孤儿 `.pyc`）是一个可顺手清理的可维护性信号，
   不是决策。R9（出站/隐私——"全部发送"，ADR 0002 Q5）仍推迟至企业分支范围。
   *状态：不变（暂缓 / 清理）。*
+
+## D17：受治理的笔记 + 三模态检索
+
+> **已决策（2026-07-22）；M3 与 M4 已于 2026-07-22 落地。** 完整理由、
+> 数据模型与分阶段迁移见
+> [ADR 0003](adr/0003-governed-notes-tri-modal-retrieval.zh.md)；构建顺序见
+> [实施计划](plans/implementation-plan-notes-and-run-logging.md)。M3 交付了
+> schema、存储与 CI；M4 又补上了 trigger PIN（默认关闭）、注入接线、agent 直读
+> 工具与离线 gate；Phase 6（max-pool 向量）仍推迟，见下文"状态"。
+>
+> **删除** `skill` 资产，把 `RuleAsset` **泛化为 `NoteAsset`**：一种可挂载到任意
+> 资产**或**命名空间的受治理标注（schema/db 用 `schema:` / `db:` scope 哨兵前缀；
+> table/column/metric/join 用资产 id）。"规则"就是一条 `activation=always` 且
+> `normative_force=must_honour` 的笔记。这关掉了 2026-07-21 诊断出的两个数据湖
+> 缺口：路由从不参考 skill（它被排除在 `schema_documents` 之外，只在路由之后
+> 才注入），以及没有任何东西会创建它（skill 不在 `Asset` 联合类型里，故从不被
+> 索引/校验/对抗审查）。
+
+- **检索变为三模态，并有明确的"PIN vs blend"契约。**（1）*语义*：每条笔记带自己的
+  向量，正常混入 RRF，因此永不稀释某个 table/schema 的向量。（2）*正则/关键词触发器*：
+  只 PIN，绝不 blend：触发即硬性纳入目标，任何词法分数都不进 RRF，这是在尊重实测结论
+  （弱词法混入强 embedding 会拉低召回，recall@3 0.535 低于 embedding 的 0.70）。
+  （3）*Agent 直读*：新增只读、无需授权的 `read_notes` / `grep_notes` 工具，靠拓扑
+  保证安全。
+- **治理升级。** 作为 `Asset` 联合类型成员，`NoteAsset` 继承三段字段分层、
+  `for_analyst` 审计剥离、`Provenance`、`validate_corpus`，以及一个 `Governance`
+  区块（`RuleAsset`/`NegativeExampleAsset` 今天都没有该区块，且带 `governance:` 键会在
+  `extra="forbid"` 下于解析时被直接拒绝，所以 D6 排除对规则根本无法书写，此举一并修好）。未经认证的笔记对路由排序拿到**零**话事权，因为
+  一条错误笔记可能把正确 schema 挤出 `top_k`；硬 PIN 由 certified 门控，并按环境放行。
+- **与 D9 / D15 / D16 的关系。** 细化 **D9** 语料库契约（`rules/` → `notes/`、
+  新增 `note` asset_type）与 **D15** schema 路由（schema 限定的笔记终于可被触达）；
+  agent 直读工具接入 **D16** 的只读工具集。
+- **已锁定的决策（2026-07-22）：**
+  - **C2（字段）：** 三个独立字段：`kind` + `activation`（`always`/`on_match`）
+    + `normative_force`（`must_honour`/`advisory`），不是一个派生出来的
+    `enforcement`；校验器会依据 `kind` 为 `activation`/`normative_force` 给出
+    默认值，两者都可被覆盖。
+  - **C3（渐进展开）：** `summary`（必填，会生成向量且始终注入）+
+    `body`（可选，仅按需读取）取代 `title`/`statement`；`summary` 由作者撰写，
+    不是自动派生的；一条笔记会落回同一个 YAML 文件，`body` 用块状标量表示。
+  - **Q2（scope 编码）：** 现在采用哨兵字符串：`schema:<name>` / `db:<name>`
+    前缀，全局用 `[]`；资产 id 中永不出现 `:`。
+  - **C1（发布状态）：** `NoteAsset` 上一个 serve 可见的 Inference 层字段，
+    能扛过 `for_analyst`；当存在 `Audit` 时，校验器会将它与
+    `audit.provenance.status` 做交叉核对。
+  - **H1（预算 + 优先级）：** 全局 `always` 笔记最多 8 条，且注入笔记文本总量
+    不超过 2000 字符；溢出或冲突时按一条五元组优先级规则处理。
+- **状态：Phase 1-5 基本已实现（M3+M4）。** `NoteAsset` 已上线；always +
+  on_match 注入（5 种 scope）、H1 预算/优先级、`read_notes` / `grep_notes`、
+  C5 排除 id 扫描、带 certified 门控的关键词 PIN，以及离线的
+  GATE-RECALL / GATE-ADV-WRONG-NOTE。Phase 6 的 max-pool 向量方案已推迟（只有
+  在召回仍卡住 EX 时才会启用）。非笔记资产的 LLM `refute()` 仍受模型门控；
+  笔记有自己的离线结构化 `refute()`。见 ADR 0003 与
+  [实施计划](plans/implementation-plan-notes-and-run-logging.md)。ADR 0003
+  的设计问题均已解决（见上文已锁定的决策）。
+
+## D18：本地优先的对话与运行日志
+
+> **已决策（2026-07-21；M2 已落地，M5 门控全量内容进行中）。** 完整理由见
+> [ADR 0004](adr/0004-local-first-conversation-run-logging.zh.md)。
+>
+> 持久、**前端无关**的对话历史外加每一轮的元数据，归属在 DeepAgents/LangGraph
+> 后端，这样每个客户端（UI、CLI、eval）都能直接继承这份能力。LangGraph 原生的
+> 持久化机制就是存储：一个持久化 checkpointer（本地 `SqliteSaver` / 生产
+> `PostgresSaver`）在 LangGraph-Server / `useStream` 路径上保存对话状态；纯
+> REST 的 `/chat` 路由按设计是无状态的，其持久化是一个独立的后续步骤。
+
+- **元数据在 ADR 0002 已有的接口点上捕获。** Token 经 `wrap_model_call` 读取
+  `usage_metadata` 写入新的 `token_usage` channel；每条台账记录都带上
+  `duration_ms` 与时间戳；每一轮的汇总由 `finalize_and_log` 写入，再加上一条
+  可移植追加记录（SQLite / JSONL），落在与版本紧密耦合的 checkpoint 结构之外。
+- **两条负责人不变式。** 运行期间只写不读。默认**只含元数据**（H11）：不含原样
+  问题/SQL/答案；台账剥离 `sql`/`result`。全量内容为可选（`log_full_content`），
+  含分档、TTL、POSIX 权限，以及 prod 下缺 `log_full_content_ack` 时在
+  `build_stack` 失败即报。
+- **覆盖范围：serve 对话与 DeepAgents 运行**（curator/SME），共用一套机制：
+  每次运行一个 thread 加一条可移植记录。
+- **状态：M2 元数据日志已上线；M5 补门控全量内容 + deep-agent 运行记录 + 持久
+  `clarify_checkpointer`。** REST `/chat` 持久化仍是后续步骤。

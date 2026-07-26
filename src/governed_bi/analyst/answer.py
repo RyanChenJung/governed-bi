@@ -10,10 +10,11 @@ mistake one for the other):
   says nothing about whether the number is right.
 - ``semantic_assurance`` (enum): how well-grounded the answer is - ``grounded``
   (clean run, no uncertainty flag), ``heuristic`` (a low-confidence join, suspect
-  column in scope, Corrective-RAG, or a *repaired* query fired a flag),
-  ``unverified`` (fenced-raw fallback), or ``none`` (refused). This is the axis
-  that should drive automatic-delivery decisions and cache admission - an answer is
-  never delivered/cached merely because it is *safe*.
+  column in scope, Corrective-RAG, a *repaired* query, or a *deferred*
+  clarification fired a flag), ``unverified`` (fenced-raw fallback), or ``none``
+  (refused). This is the axis that should drive automatic-delivery decisions and
+  cache admission - an answer is never delivered/cached merely because it is
+  *safe*.
 
 The two-axis stamp above is the **canonical** reliability vocabulary.
 ``ReliabilityTier`` is a **display-only** single-axis projection of it, kept only
@@ -115,6 +116,7 @@ class UncertaintySignals:
     fenced_raw_fallback: bool = False
     corrective_rag: bool = False
     repaired: bool = False  # the SQL only passed after one or more repair attempts
+    deferred_clarification: bool = False  # a clarification was deferred; answer rests on an unconfirmed assumption
 
     def fired(self) -> list[str]:
         return [name for name, on in vars(self).items() if on]

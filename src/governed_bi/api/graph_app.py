@@ -111,6 +111,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
     # parent package), so relative imports would fail at call time.
     from governed_bi.gateway import Gateway
     from governed_bi.analyst.agent import ClarificationPending, answer_question_agent
+    from governed_bi.corpus import load_corpus
     from governed_bi.viz import presenter
     from langgraph.types import interrupt
 
@@ -118,6 +119,29 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
         thread_id = ((config or {}).get("configurable") or {}).get("thread_id") or "default"
         question, history = _split_question_and_history(state["messages"])
         memory = _working_memory_from(history, thread_id)
+
+        # Reload the corpus from disk every turn instead of reusing the
+        # process-lifetime ``stack.corpus_analyst`` snapshot: a live-chat fold
+        # (ask_user answer -> Enhancer -> MetricAsset/NoteAsset) writes new
+        # assets to ``stack.corpus_root`` mid-session, and the long-running
+        # server process would otherwise never see them again. Mirrors what
+        # ``api/app.py``'s ``/corpus/*`` routes already do per request.
+        corpus_analyst = load_corpus(stack.corpus_root).for_analyst()
+
+        # Same reasoning, live-toggle edition (Round D3): re-check
+        # ``allow_user_clarification`` fresh from the runtime-toggles file every
+        # turn instead of trusting ``stack.settings.allow_user_clarification``
+        # (frozen at process start). ``stack.clarify_checkpointer`` is built
+        # whenever a live model exists (see ``api/stack.py``), so it is ready to
+        # use the moment the toggle flips on — only whether it gets PASSED down
+        # (and therefore whether ``analyst/agent.py``'s ``clarify_on`` is true
+        # this turn) depends on the live value.
+        from governed_bi.api.runtime_toggles import get_allow_user_clarification
+
+        live_clarify_on = get_allow_user_clarification(
+            stack.corpus_root, stack.settings.allow_user_clarification
+        )
+        clarify_checkpointer = stack.clarify_checkpointer if live_clarify_on else None
 
         try:
             writer = get_stream_writer()
@@ -144,7 +168,7 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                 result = answer_question_agent(
                     question,
                     stack.identity,
-                    corpus=stack.corpus_analyst,
+                    corpus=corpus_analyst,
                     gateway=gateway,
                     settings=stack.settings,
                     session_id=thread_id,
@@ -153,9 +177,12 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                     narrator=stack.narrator,
                     working_memory=memory,
                     on_event=writer,
-                    clarify_checkpointer=stack.clarify_checkpointer,
+                    clarify_checkpointer=clarify_checkpointer,
                     clarify_thread=clarify_thread,
                     clarify_resume=resume,
+                    n_human=n_human,
+                    corpus_root=stack.corpus_root,
+                    enhancer_chat_model=stack.enhancer_chat_model,
                 )
             finally:
                 connector.close()
@@ -166,6 +193,21 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
                 resume = interrupt(result.request)
                 continue
             break
+
+        if stack.settings.enable_mistake_memory:
+            # Round 6 productized (see ``api/live_mistake_memory.py`` for the full
+            # rationale): this turn's own ``governance_ledger`` supplies a
+            # gold-label-free (wrong, fix) pair whenever a failed run_query attempt
+            # was followed by a passing one. Fire-and-forget — never raises.
+            from governed_bi.api.live_mistake_memory import mine_live_mistake
+
+            mine_live_mistake(
+                stack,
+                stack.datasource.corpus_pin,
+                session_id=thread_id,
+                question=question,
+                answer=result,
+            )
 
         view = asdict(presenter.answer_view(result))
         text = view.get("text") or view.get("escalation") or ""
@@ -179,6 +221,24 @@ def build_chat_graph(stack: "ServeStack", *, checkpointer: Any = None):
     builder.add_edge(START, "answer")
     builder.add_edge("answer", END)
     return builder.compile(checkpointer=checkpointer) if checkpointer else builder.compile()
+
+
+def build_standalone_chat_graph(stack: "ServeStack"):
+    """Compile the chat graph with a durable conversation checkpointer (ADR 0004 L3).
+
+    Use this for local/standalone runs where LangGraph Server will not inject
+    persistence. ``make_graph`` stays checkpointer-less so it does not collide
+    with platform injection.
+    """
+    from dataclasses import replace as dc_replace
+
+    from governed_bi.analyst.run_log import make_conversation_checkpointer
+
+    cp = stack.conversation_checkpointer
+    if cp is None:
+        cp = make_conversation_checkpointer(stack.settings)
+        stack = dc_replace(stack, conversation_checkpointer=cp)
+    return build_chat_graph(stack, checkpointer=cp)
 
 
 def _build_graph():

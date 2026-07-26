@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_archeology_scanspatial
+schema: public
+physical_name: scanspatial
+columns:
+- physical_name: domainregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: aream2
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '78.010'
+  - '746.550'
+  - '294.590'
+  - '286.850'
+  - '657.390'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: volm3
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '76.7000'
+  - '85.6600'
+  - '6.0200'
+  - '49.8800'
+  - '86.8600'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: boxx
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '40.12'
+  - '26.17'
+  - '15.32'
+  - '32.93'
+  - '38.74'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: boxy
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '1.060'
+  - '8.750'
+  - '31.080'
+  - '5.250'
+  - '43.610'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: boxz
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '8.74'
+  - '16.41'
+  - '36.71'
+  - '18.09'
+  - '6.42'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: angleaz
+  physical_type: real
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 342.4
+  - 113.0
+  - 275.4
+  - 91.3
+  - 200.3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: angletilt
+  physical_type: double precision
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 23.9
+  - 12.9
+  - -22.1
+  - -14.5
+  - -3.6
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: groundspan
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '4.130'
+  - '0.930'
+  - '1.120'
+  - '9.520'
+  - '1.530'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

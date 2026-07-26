@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_archeology_scanenvironment
+schema: public
+physical_name: scanenvironment
+columns:
+- physical_name: airregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'SN20065                                           '
+  - 'SN29799                                           '
+  - 'SN83019                                           '
+  - 'SN60801                                           '
+  - 'SN64520                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: ambictemp
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '25.30'
+  - '8.80'
+  - '-3.90'
+  - '27.70'
+  - '38.80'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: humepct
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '60.40'
+  - '32.90'
+  - '72.60'
+  - '41.30'
+  - '75.70'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: illumelux
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 86054
+  - 51271
+  - 21889
+  - 12381
+  - 29553
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: geosignal
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - null
+  - Poor
+  - Poor
+  - Excellent
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: trackstatus
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - null
+  - Fixed
+  - null
+  - Float
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: linkstatus
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Disconnected
+  - Connected
+  - Disconnected
+  - Connected
+  - Connected
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: photomap
+  physical_type: character(4)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '80% '
+  - '60% '
+  - '80% '
+  - '80% '
+  - '90% '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: imgcount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 248
+  - 874
+  - 750
+  - 923
+  - 162
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

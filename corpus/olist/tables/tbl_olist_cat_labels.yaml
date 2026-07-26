@@ -1,0 +1,37 @@
+asset_type: table
+id: tbl_olist_cat_labels
+schema: olist
+physical_name: cat_labels
+columns:
+- physical_name: category_code
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - CAT_012
+  - CAT_045
+  - CAT_009
+  - CAT_014
+  - CAT_055
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: category_name
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - health_beauty
+  - computers_accessories
+  - auto
+  - bed_bath_table
+  - furniture_decor
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

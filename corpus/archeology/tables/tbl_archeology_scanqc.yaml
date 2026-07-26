@@ -1,0 +1,187 @@
+asset_type: table
+id: tbl_archeology_scanqc
+schema: public
+physical_name: scanqc
+columns:
+- physical_name: qualregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: accucheck
+  physical_type: character varying(22)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Not Required
+  - Completed
+  - Pending
+  - Pending
+  - Completed
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: ctrlstate
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Pending                                           '
+  - 'Pending                                           '
+  - 'Failed                                            '
+  - 'Pending                                           '
+  - 'Pending                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: valimeth
+  physical_type: character varying(18)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Automated
+  - Visual
+  - Visual
+  - Automated
+  - Visual
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: valistate
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Rejected
+  - Rejected
+  - Approved
+  - Approved
+  - Approved
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: archstat
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Verified
+  - Verified
+  - Pending
+  - Verified
+  - Completed
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: pubstat
+  physical_type: character varying(24)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Draft
+  - Submitted
+  - Draft
+  - Submitted
+  - Submitted
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: copystat
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Reserved                                          '
+  - 'Open Access                                       '
+  - 'Open Access                                       '
+  - 'Restricted                                        '
+  - 'Reserved                                          '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: refmention
+  physical_type: character varying(60)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Citation-8447
+  - Citation-6197
+  - Citation-8090
+  - Citation-2238
+  - Citation-6876
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: remark
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - null
+  - Sell shoulder understand serious degree particular game.
+  - Bed something performance leader realize.
+  - null
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

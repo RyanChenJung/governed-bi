@@ -58,6 +58,9 @@ def test_capabilities_reports_offline_dev(client):
     # Additive scoping flags: the summary/detail routes are served; no server FTS.
     assert body["can_scope"] is True
     assert body["can_search"] is False
+    # UtkuAI Phase 1b: unset in the committed governed_bi.toml -> defaults to
+    # "audit" (today's technical-cockpit behavior, unchanged).
+    assert body["ui_display_mode"] == "audit"
 
 
 def test_capabilities_flags_reflect_the_stack():
@@ -72,6 +75,21 @@ def test_capabilities_flags_reflect_the_stack():
     assert body["can_stream"] is False
     assert body["can_edit"] is False
     assert body["edit_mode"] is None
+
+
+def test_capabilities_reports_simple_ui_display_mode_when_set():
+    """UtkuAI Phase 1b: a static Settings passthrough (no live override, unlike
+    can_clarify) — flipping it on the stack's settings is immediately reflected."""
+    stack = build_stack()
+    simple = TestClient(
+        create_app(replace(stack, settings=replace(stack.settings, ui_display_mode="simple")))
+    )
+    assert simple.get("/capabilities").json()["ui_display_mode"] == "simple"
+
+    audit = TestClient(
+        create_app(replace(stack, settings=replace(stack.settings, ui_display_mode="audit")))
+    )
+    assert audit.get("/capabilities").json()["ui_display_mode"] == "audit"
 
 
 def test_build_stack_defaults_can_stream_false():
@@ -118,8 +136,14 @@ def test_routes_app_advertises_streaming():
     # routes.py is only mounted on the LangGraph server (which fronts the chat
     # graph), so it flips can_stream on.
     from governed_bi.api.routes import app as routes_app
+    from governed_bi.api.stack import build_stack
 
-    assert TestClient(routes_app).get("/capabilities").json()["can_stream"] is True
+    body = TestClient(routes_app).get("/capabilities").json()
+    assert body["can_stream"] is True
+    # can_clarify depends on can_stream (see stack.build_stack) — must be
+    # recomputed against the forced-True can_stream here, not left at
+    # build_stack()'s stale REST-default (can_stream=False) value.
+    assert body["can_clarify"] is build_stack().has_live_model
 
 
 def test_health_is_green(client):
@@ -281,15 +305,18 @@ def test_knowledge_graph_nodes_and_edges(client):
 
 def test_corpus_assets_and_type_filter(client):
     everything = client.get("/corpus/assets").json()
-    assert {r["asset_type"] for r in everything} >= {"join", "metric", "term", "negative_example"}
+    assert {r["asset_type"] for r in everything} >= {
+        "join", "metric", "term", "note", "negative_example"
+    }
     metrics = client.get("/corpus/assets", params={"type": "metric"}).json()
     assert metrics and all(r["asset_type"] == "metric" for r in metrics)
+    notes = client.get("/corpus/assets", params={"type": "note"}).json()
+    assert notes and all(r["asset_type"] == "note" for r in notes)
+    assert client.get("/corpus/assets", params={"type": "rule"}).status_code == 422
 
 
-def test_skills(client):
-    skills = client.get("/skills").json()
-    assert len(skills) == 1
-    assert skills[0]["body"].strip()
+def test_skills_route_is_removed(client):
+    assert client.get("/skills").status_code == 404
 
 
 # --------------------------------------------------------------------------- #
@@ -521,3 +548,181 @@ def test_column_related_resolves_fk_and_joins(client):
 
 def test_column_related_unknown_is_404(client):
     assert client.get("/columns/col_does_not_exist/related").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# clarifications (admin HITL over clarifications.jsonl; POST gated on can_edit)
+# --------------------------------------------------------------------------- #
+
+_FIXTURE_RECORDS = [
+    {
+        "id": "q001",
+        "scope": "term:revenue",
+        "question": "When you say 'revenue', which table/column does that map to?",
+        "choices": [
+            {"id": "c1", "label": "payments.amount"},
+            {"id": "c2", "label": "line_items.unit_price"},
+            {"id": "c3", "label": "line_items.unit_price - line_items.discount"},
+        ],
+        "allow_freeform": False,
+    },
+    {
+        "id": "q002",
+        "scope": "rule:fiscal_year_start",
+        "question": "What month does your fiscal year start?",
+        "choices": [
+            {"id": "jan", "label": "Jan"},
+            {"id": "apr", "label": "Apr"},
+            {"id": "jul", "label": "Jul"},
+            {"id": "oct", "label": "Oct"},
+        ],
+        "allow_freeform": True,
+    },
+]
+
+
+def _clarifications_client(tmp_path, **flags):
+    from governed_bi.curator.clarifications import ClarificationRecord, write_clarifications
+
+    stack = replace(build_stack(), corpus_root=tmp_path, **flags)
+    write_clarifications(
+        tmp_path / "clarifications.jsonl",
+        [ClarificationRecord.model_validate(r) for r in _FIXTURE_RECORDS],
+    )
+    return TestClient(create_app(stack))
+
+
+def test_list_clarifications_merges_curator_and_live_chat_sources(tmp_path):
+    """Round 6 appends ``source="live_chat"`` records into the SAME
+    clarifications.jsonl ledger the curator's own ``source="curator"``
+    (default) records live in. Round 8 verifies the pre-existing
+    ``GET /clarifications`` route already returns both, unfiltered by
+    source — the merge is automatic at the data layer, no route change
+    needed. Also checks the API response shape now exposes ``source``."""
+    from governed_bi.curator.clarifications import ClarificationRecord, write_clarifications
+
+    stack = replace(build_stack(), corpus_root=tmp_path, can_edit=True, edit_mode="file")
+    write_clarifications(
+        tmp_path / "clarifications.jsonl",
+        [
+            ClarificationRecord.model_validate(_FIXTURE_RECORDS[0]),  # source defaults "curator"
+            ClarificationRecord(
+                id="q_live_001",
+                scope="live_chat:q_live_001",
+                question="Should refunds count as negative revenue?",
+                source="live_chat",
+            ),
+        ],
+    )
+    client = TestClient(create_app(stack))
+    r = client.get("/clarifications")
+    assert r.status_code == 200
+    by_id = {rec["id"]: rec for rec in r.json()}
+    assert by_id.keys() == {"q001", "q_live_001"}
+    assert by_id["q001"]["source"] == "curator"
+    assert by_id["q_live_001"]["source"] == "live_chat"
+
+
+def test_list_clarifications_filters_by_status(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.get("/clarifications", params={"status": "open"})
+    assert r.status_code == 200
+    ids = {rec["id"] for rec in r.json()}
+    assert ids == {"q001", "q002"}
+
+
+def test_answer_clarification_with_choice(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.post("/clarifications/q001/answer", json={"choice_id": "c1"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "answered"
+    assert body["answer_choice_id"] == "c1"
+    assert body["answered_by"] == "admin"
+    # persisted: a fresh GET reflects the write
+    again = client.get("/clarifications", params={"status": "open"}).json()
+    assert {rec["id"] for rec in again} == {"q002"}
+
+
+def test_answer_clarification_with_freeform(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    r = client.post("/clarifications/q002/answer", json={"answer": "Apr (custom: mid-quarter)"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "Apr (custom: mid-quarter)"
+
+
+def test_answer_clarification_disabled_returns_403(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=False, edit_mode=None)
+    assert client.post("/clarifications/q001/answer", json={"choice_id": "c1"}).status_code == 403
+
+
+def test_answer_clarification_unknown_id_is_404(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    assert client.post("/clarifications/q999/answer", json={"answer": "x"}).status_code == 404
+
+
+def test_answer_clarification_requires_choice_or_answer(tmp_path):
+    client = _clarifications_client(tmp_path, can_edit=True, edit_mode="file")
+    assert client.post("/clarifications/q001/answer", json={}).status_code == 422
+
+
+def _elicitation_client(tmp_path):
+    """A ledger seeded with the REAL A-category "amount" candidate from
+    ``generate_candidate_questions`` (not a hand-rolled fixture) — its
+    ``target_table`` is "orders" (alphabetically first of the two tables the
+    "amount" term matches), "payments" being the other one. Reused by both
+    the auto-D-trigger and no-spurious-D API tests below."""
+    from governed_bi.curator.clarifications import write_clarifications
+    from governed_bi.curator.elicitation import generate_candidate_questions
+
+    from test_elicitation import _schema_tables
+
+    candidates = generate_candidate_questions(_schema_tables())
+    amount_q = next(r for r in candidates if r.category == "A" and "amount" in r.scope)
+    assert amount_q.target_table == "orders"
+    choice_ids = {c["id"] for c in (amount_q.choices or [])}
+    assert {"orders.total_amount", "payments.revenue_amount"} <= choice_ids
+
+    write_clarifications(tmp_path / "clarifications.jsonl", [amount_q])
+    stack = replace(build_stack(), corpus_root=tmp_path, can_edit=True, edit_mode="file")
+    return TestClient(create_app(stack)), amount_q
+
+
+def test_answer_clarification_auto_triggers_d_followup_through_api_route(tmp_path):
+    """End-to-end wiring check (the gap the manual checklist's D-auto-trigger
+    bullet points at): answering the real A candidate through the actual
+    ``POST /clarifications/{id}/answer`` route — not by calling
+    ``maybe_generate_join_followup`` directly — with a choice on the table
+    OTHER than the expected ``target_table`` ("orders") must land a new,
+    open D-category record in the ledger."""
+    client, amount_q = _elicitation_client(tmp_path)
+
+    r = client.post(
+        f"/clarifications/{amount_q.id}/answer",
+        json={"choice_id": "payments.revenue_amount"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"] == "'amount' maps to payments.revenue_amount."
+
+    records = client.get("/clarifications").json()
+    followups = [rec for rec in records if rec.get("category") == "D"]
+    assert len(followups) == 1
+    followup = followups[0]
+    assert followup["status"] == "open"
+    assert "orders" in followup["question"] and "payments" in followup["question"]
+
+
+def test_answer_clarification_no_spurious_d_followup_when_table_matches(tmp_path):
+    """Same real A candidate/route as above, but the picked choice is on the
+    EXPECTED table ("orders") — no D follow-up should be created."""
+    client, amount_q = _elicitation_client(tmp_path)
+
+    r = client.post(
+        f"/clarifications/{amount_q.id}/answer",
+        json={"choice_id": "orders.total_amount"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"] == "'amount' maps to orders.total_amount."
+
+    records = client.get("/clarifications").json()
+    assert all(rec.get("category") != "D" for rec in records)

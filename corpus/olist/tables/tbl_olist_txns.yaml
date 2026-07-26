@@ -1,0 +1,187 @@
+asset_type: table
+id: tbl_olist_txns
+schema: olist
+physical_name: txns
+columns:
+- physical_name: txn_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 53cdb2fc8bc7dce0b6741e2150273451
+  - 47770eb9100c2d0c44946d9cf07ec65d
+  - 949d5b44dbf5de918fe9c16f97b45f8a
+  - ad21c59c0840e6cb83a9ceb5573f8159
+  - a4591c265e18cb1dcee52889e2d8acc3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: acct_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - b0830fb4747a6c6d20dea0b8c802d7ef
+  - 41ce2a54c0b03bf3443c3d931a367089
+  - f88197465ea7920adcdbec7375364d82
+  - 8ab97904e6daea8866dbdbc4fb7aad2c
+  - 503740e9ca751ccdda7ba28e9ab8f608
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: status
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - delivered
+  - delivered
+  - delivered
+  - delivered
+  - delivered
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: purchased_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-07-24 20:41:37'
+  - '2020-08-08 08:38:49'
+  - '2019-11-18 19:28:06'
+  - '2020-02-13 21:18:39'
+  - '2019-07-09 21:57:05'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: approved_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-07-26 03:24:27'
+  - '2020-08-08 08:55:23'
+  - '2019-11-18 19:45:59'
+  - '2020-02-13 22:20:29'
+  - '2019-07-09 22:10:13'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: carrier_pickup_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-07-26 14:31:00'
+  - '2020-08-08 13:50:00'
+  - '2019-11-22 13:39:59'
+  - '2020-02-14 19:46:34'
+  - '2019-07-11 14:58:04'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: delivered_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-08-07 15:27:45'
+  - '2020-08-17 18:06:29'
+  - '2019-12-02 00:28:42'
+  - '2020-02-16 18:17:02'
+  - '2019-07-26 10:57:55'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: est_delivery_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2020-08-13 00:00:00'
+  - '2020-09-04 00:00:00'
+  - '2019-12-15 00:00:00'
+  - '2020-02-26 00:00:00'
+  - '2019-08-01 00:00:00'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: channel
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - mobile
+  - web
+  - web
+  - web
+  - mobile
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: currency
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - USD
+  - USD
+  - USD
+  - USD
+  - USD
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: rma_flag
+  physical_type: INTEGER
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 0
+  - 0
+  - 0
+  - 3
+  - 1
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fc_region
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - EAST
+  - EAST
+  - CENTRAL
+  - WEST
+  - CENTRAL
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

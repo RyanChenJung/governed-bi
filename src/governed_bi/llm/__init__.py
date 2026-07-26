@@ -20,7 +20,7 @@ from .client import (
     cosine,
 )
 from .fake import FakeToolModel, ai_tool_turn, tool_call
-from .langchain_client import LangChainChatClient, LangChainEmbedder
+from .langchain_client import LangChainChatClient, LangChainEmbedder, bind_temperature
 
 __all__ = [
     "ChatClient",
@@ -32,6 +32,7 @@ __all__ = [
     "OpenAiEmbedder",
     "StaticChatClient",
     "ai_tool_turn",
+    "bind_temperature",
     "cosine",
     "tool_call",
 ]

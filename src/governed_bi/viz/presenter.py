@@ -25,7 +25,7 @@ from ..corpus.schemas import (
     JoinAsset,
     MetricAsset,
     NegativeExampleAsset,
-    RuleAsset,
+    NoteAsset,
     TableAsset,
     TermAsset,
 )
@@ -118,17 +118,43 @@ class AssetRow:
 
 
 @dataclass(frozen=True)
-class SkillView:
-    skill_id: str
-    kind: str
-    schema: str  # D15 namespace (skill ``SkillFrontmatter.schema``)
-    body: str
+class AssumptionRow:
+    """One admin-answered clarification folded into the corpus as a ``NoteAsset``
+    (Round 9). Distinct from :class:`AssetRow`: this is the readable
+    question→answer log an admin agreed to, not an editable asset row."""
+
+    id: str
+    question: str
+    answer: str
+    answered_by: str | None
+    answered_at: str | None  # ISO timestamp (fold time); ``None`` if unset
+    source: str | None  # "curator" | "live_chat"
+
+
+@dataclass(frozen=True)
+class ConflictRow:
+    """One Round-C conflict: a clarification whose Enhancer decision flagged
+    ``conflict_with`` an existing ``NoteAsset``/``MetricAsset``. Distinct from
+    :class:`AssumptionRow`: these are DISAGREEING definitions awaiting an admin
+    decision, not settled assumptions.
+    """
+
+    id: str  # the conflict NoteAsset's id (target for resolve_conflict)
+    status: str  # "unresolved" | "resolved_kept_existing" | "resolved_replaced"
+    existing_asset_id: str  # the asset this conflicts with
+    existing_asset_type: str  # "note" | "metric"
+    existing_text: str  # the existing asset's current definition
+    existing_question: str | None  # the question behind the existing side, if known
+    new_question: str | None  # the question behind the new, conflicting answer
+    new_text: str  # the new, conflicting answer's definition
+    answered_by: str | None
+    created_at: str | None
+    source: str | None  # "curator" | "live_chat"
 
 
 @dataclass(frozen=True)
 class CorpusHealth:
     counts: dict[str, int]  # asset_type -> count
-    n_skills: int
     n_suspect_columns: int
     n_excluded: int  # excluded tables + columns
     n_low_confidence_joins: int
@@ -187,7 +213,7 @@ class KnowledgeGraphNode:
     """A corpus asset as a node in the full knowledge graph."""
 
     id: str
-    kind: str  # asset_type: table | join | metric | term | rule | few_shot | negative_example
+    kind: str  # asset_type: table | join | metric | term | note | few_shot | negative_example
     label: str
     excluded: bool
     provenance_status: str | None
@@ -375,7 +401,6 @@ def corpus_health(corpus: "Corpus") -> CorpusHealth:
     findings = [str(f) for f in validate_corpus(corpus.assets)]
     return CorpusHealth(
         counts=counts,
-        n_skills=len(corpus.skills),
         n_suspect_columns=n_suspect,
         n_excluded=n_excluded,
         n_low_confidence_joins=n_low_conf_joins,
@@ -486,8 +511,8 @@ def _summary(asset) -> str:
         return f"{asset.name}: {asset.expression}"
     if isinstance(asset, TermAsset):
         return f"{asset.name} = {', '.join(asset.synonyms) or '(no synonyms)'}"
-    if isinstance(asset, RuleAsset):
-        return f"[{asset.kind.value}] {asset.statement}"
+    if isinstance(asset, NoteAsset):
+        return f"[{asset.kind.value}] {asset.summary}"
     if isinstance(asset, FewShotAsset):
         return asset.question
     if isinstance(asset, NegativeExampleAsset):
@@ -496,7 +521,7 @@ def _summary(asset) -> str:
 
 
 def asset_rows(corpus: "Corpus", *, asset_types: set[str] | None = None) -> list[AssetRow]:
-    """One-line rows for non-table assets (joins, metrics, terms, rules,
+    """One-line rows for non-table assets (joins, metrics, terms, notes,
     few-shots, negatives), optionally filtered to ``asset_types``."""
     rows: list[AssetRow] = []
     for asset in corpus.assets:
@@ -516,16 +541,89 @@ def asset_rows(corpus: "Corpus", *, asset_types: set[str] | None = None) -> list
     return rows
 
 
-def skill_views(corpus: "Corpus") -> list[SkillView]:
-    return [
-        SkillView(
-            skill_id=skill.frontmatter.skill_id,
-            kind=skill.frontmatter.kind.value,
-            schema=skill.frontmatter.schema,
-            body=skill.body,
+def assumption_rows(corpus: "Corpus") -> list[AssumptionRow]:
+    """Admin-answered clarifications folded into the corpus (Round 9).
+
+    Filters ``NoteAsset``s AND ``MetricAsset``s (round A can fold an answered
+    clarification into either, depending on whether the Enhancer judged it
+    formula-shaped) down to those that carry ``source_question`` — the marker
+    ``AssetBag`` stamps only when the asset came from an answered
+    ``ClarificationRecord`` (see ``curator/asset_bag.py``). An asset authored
+    through any other path has no ``source_question`` and is excluded, so this
+    is a real filter, not "every note/metric typed."
+
+    Also excludes Round-C conflict notes (``conflict_status is not None`` —
+    ``MetricAsset`` has no such field; conflicts are always written as
+    ``NoteAsset``s, see ``AssetBag._record_conflict``): those carry
+    ``source_question`` too (the question behind the disagreeing answer) but
+    are NOT settled assumptions — they belong in :func:`conflict_rows` instead,
+    whether resolved or not, so a resolved conflict never quietly reappears
+    here as if it had been agreed calmly.
+    """
+    rows: list[AssumptionRow] = []
+    for asset in corpus.assets:
+        if not isinstance(asset, (NoteAsset, MetricAsset)) or asset.source_question is None:
+            continue
+        if isinstance(asset, NoteAsset) and asset.conflict_status is not None:
+            continue
+        provenance = asset.audit.provenance if asset.audit is not None else None
+        answer = asset.summary if isinstance(asset, NoteAsset) else asset.expression
+        rows.append(
+            AssumptionRow(
+                id=asset.id,
+                question=asset.source_question,
+                answer=answer,
+                answered_by=getattr(provenance, "by", None) if provenance else None,
+                answered_at=provenance.built_at if provenance else None,
+                source=asset.source_kind,
+            )
         )
-        for skill in corpus.skills
-    ]
+    return rows
+
+
+def conflict_rows(corpus: "Corpus") -> list[ConflictRow]:
+    """Round-C conflicts: clarifications whose Enhancer decision flagged
+    ``conflict_with`` an existing ``NoteAsset``/``MetricAsset`` (see
+    ``AssetBag._record_conflict``). Includes both unresolved and resolved
+    conflicts (``status`` distinguishes them) so a UI can show history, not
+    just the current backlog.
+    """
+    by_id = {a.id: a for a in corpus.assets}
+    rows: list[ConflictRow] = []
+    for asset in corpus.assets:
+        if not isinstance(asset, NoteAsset) or asset.conflict_status is None:
+            continue
+        provenance = asset.audit.provenance if asset.audit is not None else None
+        existing_id = asset.related_notes[0] if asset.related_notes else ""
+        existing = by_id.get(existing_id)
+        if isinstance(existing, NoteAsset):
+            existing_type = "note"
+            existing_text = existing.summary
+            existing_question = existing.source_question
+        elif isinstance(existing, MetricAsset):
+            existing_type = "metric"
+            existing_text = f"{existing.name} = {existing.expression}"
+            existing_question = None
+        else:
+            existing_type = "unknown"
+            existing_text = "(asset no longer exists)"
+            existing_question = None
+        rows.append(
+            ConflictRow(
+                id=asset.id,
+                status=asset.conflict_status,
+                existing_asset_id=existing_id,
+                existing_asset_type=existing_type,
+                existing_text=existing_text,
+                existing_question=existing_question,
+                new_question=asset.source_question,
+                new_text=asset.summary,
+                answered_by=getattr(provenance, "by", None) if provenance else None,
+                created_at=provenance.built_at if provenance else None,
+                source=asset.source_kind,
+            )
+        )
+    return rows
 
 
 def schema_graph(corpus: "Corpus") -> SchemaGraphView:
@@ -574,8 +672,8 @@ def _kg_label(asset) -> str:
         return asset.name
     if isinstance(asset, JoinAsset):
         return asset.on
-    if isinstance(asset, RuleAsset):
-        return asset.statement
+    if isinstance(asset, NoteAsset):
+        return asset.summary
     if isinstance(asset, FewShotAsset):
         return asset.question
     if isinstance(asset, NegativeExampleAsset):
@@ -664,7 +762,7 @@ def knowledge_graph(corpus: "Corpus") -> KnowledgeGraphView:
                 add_edge(asset.id, asset.binding.asset_id, "grounds", confidence=asset.confidence)
             for related in asset.related_terms:
                 add_edge(asset.id, related.id, f"related:{related.relation.value}")
-        elif isinstance(asset, RuleAsset):
+        elif isinstance(asset, NoteAsset):
             for scope_id in asset.scope:
                 add_edge(asset.id, scope_id, "scopes")
         elif isinstance(asset, FewShotAsset):
@@ -703,7 +801,7 @@ def related_to_column(corpus: "Corpus", column_id: str) -> ColumnRelatedView | N
     Returns ``None`` when ``column_id`` does not resolve to a known column (the API
     turns that into a 404). ``column_id`` is the derived id
     ``col_<table>_<physical_name>`` (:func:`corpus.ids.derive_column_id`), the same
-    id used by ``Column.references``, ``TermBinding.asset_id``, and ``RuleAsset.scope``.
+    id used by ``Column.references``, ``TermBinding.asset_id``, and ``NoteAsset.scope``.
 
     Reads the full corpus (like the other audit-surface views), so items on excluded
     assets still show. Joins are resolved server-side from the physical ON predicate
@@ -770,13 +868,13 @@ def related_to_column(corpus: "Corpus", column_id: str) -> ColumnRelatedView | N
                         provenance_status=_provenance_status(asset),
                     )
                 )
-        elif isinstance(asset, RuleAsset):
+        elif isinstance(asset, NoteAsset):
             if column_id in asset.scope:
                 rules.append(
                     RelatedRuleView(
                         id=asset.id,
                         kind=asset.kind.value,
-                        statement=asset.statement,
+                        statement=asset.summary,
                         confidence=asset.confidence,
                         provenance_status=_provenance_status(asset),
                     )

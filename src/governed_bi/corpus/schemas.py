@@ -26,7 +26,7 @@ import warnings
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 # A ``schema`` value names an on-disk ``corpus/<schema>/`` directory (D13) AND a
 # live SQL namespace, so it must be a bare identifier. Rejecting separators / ``..``
@@ -121,17 +121,38 @@ class TermRelation(str, Enum):
     uses = "uses"
 
 
-class RuleKind(str, Enum):
+class NoteKind(str, Enum):
+    # default (activation=always, normative_force=must_honour)
     business_rule = "business_rule"
-    context = "context"
     constraint = "constraint"
-
-
-class SkillKind(str, Enum):
+    # default (activation=always, normative_force=advisory)
+    context = "context"
+    domain_overview = "domain_overview"
+    # default (activation=on_match, normative_force=advisory)
     routing = "routing"
     gotchas = "gotchas"
     pattern = "pattern"
-    domain_overview = "domain_overview"
+
+
+class NoteActivation(str, Enum):
+    always = "always"
+    on_match = "on_match"
+
+
+class NormativeForce(str, Enum):
+    must_honour = "must_honour"
+    advisory = "advisory"
+
+
+_NOTE_DEFAULTS: dict[NoteKind, tuple[NoteActivation, NormativeForce]] = {
+    NoteKind.business_rule: (NoteActivation.always, NormativeForce.must_honour),
+    NoteKind.constraint: (NoteActivation.always, NormativeForce.must_honour),
+    NoteKind.context: (NoteActivation.always, NormativeForce.advisory),
+    NoteKind.domain_overview: (NoteActivation.always, NormativeForce.advisory),
+    NoteKind.routing: (NoteActivation.on_match, NormativeForce.advisory),
+    NoteKind.gotchas: (NoteActivation.on_match, NormativeForce.advisory),
+    NoteKind.pattern: (NoteActivation.on_match, NormativeForce.advisory),
+}
 
 
 # A confidence score in [0, 1]. Optional on assets that may be unscored.
@@ -355,20 +376,78 @@ class MetricAsset(_Strict):
     rules: list[MetricRule] = Field(default_factory=list)
     confidence: Confidence | None = None
 
+    # Mirrors NoteAsset's fields of the same name — set when this metric was
+    # folded from an answered ClarificationRecord (Enhancer, round A), so
+    # /corpus/assumptions can surface it as an Agreed Assumption regardless of
+    # which asset type the Enhancer chose to write.
+    source_question: str | None = None
+    source_kind: str | None = None  # "curator" | "live_chat", mirrors ClarificationRecord.source
+
     audit: Audit | None = None
 
 
-class RuleAsset(_Strict):
-    asset_type: Literal["rule"] = "rule"
+class Trigger(_Strict):
+    """Keyword or regex pin trigger (Phase 2 PIN wiring; authored in Phase 1)."""
+
+    kind: Literal["keyword", "regex"]
+    value: str
+
+
+class NoteAsset(_Strict):
+    """Governed annotation attachable to any asset or namespace (D17 / ADR 0003).
+
+    A former "rule" is a note with ``activation=always`` and
+    ``normative_force=must_honour``. ``summary`` always-injects and embeds;
+    ``body`` is progressive disclosure (on-demand only).
+    """
+
+    asset_type: Literal["note"] = "note"
     id: str
 
-    # ── Inference ──
-    kind: RuleKind
-    scope: list[str] = Field(default_factory=list)  # asset ids; empty = global
-    statement: str
+    # ── Inference (curator writes / gold fills) ──
+    kind: NoteKind
+    scope: list[str] = Field(default_factory=list)  # asset/namespace ids; empty = global
+    summary: str  # one sentence; embedding target AND always-injection payload
+    body: str | None = None  # long form; on-demand only (never embedded / always-injected)
+    triggers: list[Trigger] = Field(default_factory=list)
+    activation: NoteActivation | None = None  # defaulted from kind; overridable
+    normative_force: NormativeForce | None = None  # defaulted from kind; overridable
     confidence: Confidence | None = None
+    related_notes: list[str] = Field(default_factory=list)
+    publication_status: ProvenanceStatus = ProvenanceStatus.proposed
+    # serve-visible; Audit.Provenance.status is stripped by for_analyst
+
+    # ── Round 9: admin clarification provenance (optional, backward-compatible) ──
+    # When this note was folded from an answered ``ClarificationRecord`` (see
+    # ``AssetBag.record_caveats``), these preserve the original question and
+    # its origin so the admin "agreed assumptions" log view can show a
+    # question→answer pair instead of just the answer. ``None`` for any note
+    # created through another path (e.g. a curator/agent-authored note).
+    source_question: str | None = None
+    source_kind: str | None = None  # "curator" | "live_chat", mirrors ClarificationRecord.source
+
+    # ── Round C: a clarification whose Enhancer decision flagged conflict_with
+    # ── an existing NoteAsset/MetricAsset gets folded as one of these instead of
+    # silently dropped. ``related_notes`` (pre-existing, previously unused) holds
+    # the conflicting asset's id; ``conflict_status`` tracks the human resolution.
+    # ``None`` for every note created through any other path.
+    conflict_status: Literal["unresolved", "resolved_kept_existing", "resolved_replaced"] | None = (
+        None
+    )
+
+    # ── Governance (NEW vs. RuleAsset; closes a latent D6 gap) ──
+    governance: Governance | None = None
 
     audit: Audit | None = None
+
+    @model_validator(mode="after")
+    def _defaults_from_kind(self) -> NoteAsset:
+        act_default, force_default = _NOTE_DEFAULTS[self.kind]
+        if self.activation is None:
+            self.activation = act_default
+        if self.normative_force is None:
+            self.normative_force = force_default
+        return self
 
 
 class NegativeExampleAsset(_Strict):
@@ -385,17 +464,6 @@ class NegativeExampleAsset(_Strict):
     audit: Audit | None = None
 
 
-class SkillFrontmatter(BaseModel):
-    """Frontmatter of a Markdown skill. The body is prose (not modeled here)."""
-
-    model_config = ConfigDict(extra="allow")
-
-    skill_id: str
-    schema: SchemaName
-    kind: SkillKind
-    provenance: Provenance
-
-
 # --------------------------------------------------------------------------- #
 # Discriminated union + parse entry point
 # --------------------------------------------------------------------------- #
@@ -407,7 +475,7 @@ Asset = Annotated[
         FewShotAsset,
         TermAsset,
         MetricAsset,
-        RuleAsset,
+        NoteAsset,
         NegativeExampleAsset,
     ],
     Field(discriminator="asset_type"),
@@ -423,7 +491,3 @@ def parse_asset(data: dict[str, Any]) -> Asset:
     enum value.
     """
     return _ASSET_ADAPTER.validate_python(data)
-
-
-def parse_skill_frontmatter(data: dict[str, Any]) -> SkillFrontmatter:
-    return SkillFrontmatter.model_validate(data)

@@ -88,10 +88,14 @@ class DataSourceConfig:
     here. Set ``dsn_env`` to the name of an environment variable holding the full
     libpq DSN (read at call time), exactly as the API key is handled. ``dsn`` is an
     inline fallback for local, secret-free DSNs only.
+
+    ``db`` is the lake identity for future ``db:`` note-scope sentinels (ADR 0003),
+    not the SQL schema pin — that is ``corpus_pin`` / ``schema``.
     """
 
     kind: str = "sqlite"  # sqlite | postgres | redshift
     corpus_pin: str = "beer_factory"  # default corpus schema subtree / BIRD db_id
+    db: str = "main"  # lake identity for db: scope sentinels (≠ corpus_pin)
     sqlite_path: str = "data/bird/beer_factory.sqlite"  # kind=sqlite; repo-root-relative
     dsn: str | None = None  # kind=postgres/redshift: inline DSN (local, secret-free only)
     dsn_env: str | None = None  # ...or the env var holding the DSN (preferred)
@@ -190,7 +194,96 @@ class Settings:
     # ── Serve / API (see [serve]) ──
     can_stream: bool = False  # True when a streaming chat graph is fronted
     allow_edit: bool = True  # corpus file-write; for_env sets False in prod
+    # Opt-in for the live ask_user / defer clarification flow and auto-certifying
+    # answered clarifications into the corpus. Default False: without any config
+    # the repo behaves exactly like vanilla governed-bi (Minhao's fail-closed,
+    # analyst-approves-everything philosophy). Set True to opt into this
+    # session's self-correcting-in-the-moment philosophy instead.
+    allow_user_clarification: bool = False
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
+
+    # ── UI display mode (Phase 1b) ──
+    # "audit" (default): today's unchanged technical cockpit — pipeline stages,
+    # SQL, full provenance always visible. "simple": the UtkuAI business-user
+    # view (question + plain-language answer + reliability indicator only);
+    # the frontend still receives the same payload and gates rendering
+    # client-side, so a user can reveal the audit view without a re-fetch.
+    ui_display_mode: str = "audit"  # "audit" | "simple"
+
+    # ── Result sanity check (CHESS "Unit Tester" pattern; Round 1) ──
+    # When True, ``run_query`` accepts optional structured ``assertions`` about
+    # the expected result shape (row count / sign / null-ness); a failed
+    # assertion is fed back as an advisory nudge into the existing
+    # ``RUN_QUERY_CAP`` retry loop (see ``GovernanceMiddleware._sanity_check``).
+    # Default False: without config, behavior is unchanged from before Round 1.
+    enable_result_sanity_check: bool = False
+
+    # ── Mistake-fix memory (Memo-SQL pattern; Round 6) ──
+    # When True, an eval/serve caller may merge retrieved past-mistake
+    # ``NoteAsset``s (kind=gotchas, built offline from observed wrong-SQL vs
+    # gold-SQL pairs — see ``curator.mistake_memory``) into the corpus before
+    # retrieval, so a similar prior mistake + its fix surfaces on-match in the
+    # Analyst prompt. Default False: without config, retrieval/serve behavior
+    # is unchanged — this only gates the eval harness's opt-in corpus merge in
+    # ``scripts/olist_baseline_eval.py``, never the live serve corpus.
+    enable_mistake_memory: bool = False
+
+    # ── Mistake-fix memory: SQL-feature matching mode (Tk-Boost pattern; Round 8) ──
+    # Round 6's mistake memory is retrieved/injected pre-generation by matching a
+    # NEW question's TEXT against a stored mistake's question text (BM25/embedding,
+    # via ``retrieval.rvgd.retrieve``). "sql_features" is an alternative retrieval
+    # mode: after a ``run_query`` executes, the just-run SQL's tables/columns/
+    # keywords (``curator.sql_features``) are matched against the SAME mistake
+    # notes re-indexed by their stored wrong-SQL's own features
+    # (``curator.mistake_store``), and a hit is fed back as an advisory nudge on
+    # the tool result (see ``GovernanceMiddleware._mistake_memory_feedback``) —
+    # mutually exclusive with the question-text path so the two can be A/B'd on
+    # the same corpus. No-op unless ``enable_mistake_memory`` is also True.
+    # "question_text" (default) leaves Round 6's behavior completely unchanged.
+    mistake_memory_match_mode: str = "question_text"  # "question_text" | "sql_features"
+
+    # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
+    conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
+    conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
+    conversation_checkpointer_dsn_env: str | None = None  # env var name; never inline DSN
+    run_log_kind: str = "sqlite"  # sqlite | jsonl | off
+    run_log_path: str = "data/logs/runs.sqlite"
+
+    # ── Always-note prompt budget (ADR 0003 H1; see [notes] in TOML) ──
+    always_note_global_max: int = 8
+    always_note_char_max: int = 2000
+
+    # ── PIN trigger authority (ADR 0003 H2; R7/R8) ──
+    # When True, keyword PINs can affect schema shortlist / selected (prod needs
+    # certified-only graduation — see pin_require_certified).
+    pin_triggers_enabled: bool = False
+    pin_require_certified: bool = True  # prod default; dev may set False
+    pin_max: int = 3
+
+    # ── Full-content run log (ADR 0004 H11; M5) ──
+    log_full_content: bool = False
+    log_full_content_ack: bool = False  # required True in prod when log_full_content
+    log_row_previews: bool = False  # Tier C; needs log_full_content too
+    log_full_content_ttl_days: int = 30
+
+    # ── Eval harness concurrency (see [eval]; docs/plans/eval-concurrency-design.md) ──
+    # Serve-loop worker threads for the BIRD eval drivers. 1 = fully serial and
+    # byte-identical to the pre-concurrency behaviour (the non-negotiable default).
+    # ``eval_serve_workers``, when set, overrides ``eval_workers`` for the
+    # per-question serve loop; ``eval_build_workers`` is reserved — the per-DB
+    # build loop stays serial for now (design doc §Ranked plan step 2).
+    eval_workers: int = 1
+    eval_serve_workers: int | None = None
+    eval_build_workers: int | None = None
+
+    def serve_worker_count(self) -> int:
+        """Effective serve-loop worker count: the ``[eval] serve_workers`` split
+        override when set, else the single ``workers`` knob."""
+        return (
+            self.eval_serve_workers
+            if self.eval_serve_workers is not None
+            else self.eval_workers
+        )
 
     @classmethod
     def for_env(
@@ -202,7 +295,17 @@ class Settings:
         corpus_root: str | None = None,
         can_stream: bool | None = None,
         allow_edit: bool | None = None,
+        allow_user_clarification: bool | None = None,
+        ui_display_mode: str | None = None,
+        enable_result_sanity_check: bool | None = None,
+        enable_mistake_memory: bool | None = None,
+        mistake_memory_match_mode: str | None = None,
         cors_origins: tuple[str, ...] | None = None,
+        conversation_checkpointer_kind: str | None = None,
+        conversation_checkpointer_path: str | None = None,
+        conversation_checkpointer_dsn_env: str | None = None,
+        run_log_kind: str | None = None,
+        run_log_path: str | None = None,
     ) -> "Settings":
         env = Environment(environment)
         base: dict[str, Any] = {}
@@ -216,8 +319,28 @@ class Settings:
             base["can_stream"] = can_stream
         if allow_edit is not None:
             base["allow_edit"] = allow_edit
+        if allow_user_clarification is not None:
+            base["allow_user_clarification"] = allow_user_clarification
+        if ui_display_mode is not None:
+            base["ui_display_mode"] = ui_display_mode
+        if enable_result_sanity_check is not None:
+            base["enable_result_sanity_check"] = enable_result_sanity_check
+        if enable_mistake_memory is not None:
+            base["enable_mistake_memory"] = enable_mistake_memory
+        if mistake_memory_match_mode is not None:
+            base["mistake_memory_match_mode"] = mistake_memory_match_mode
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
+        if conversation_checkpointer_kind is not None:
+            base["conversation_checkpointer_kind"] = conversation_checkpointer_kind
+        if conversation_checkpointer_path is not None:
+            base["conversation_checkpointer_path"] = conversation_checkpointer_path
+        if conversation_checkpointer_dsn_env is not None:
+            base["conversation_checkpointer_dsn_env"] = conversation_checkpointer_dsn_env
+        if run_log_kind is not None:
+            base["run_log_kind"] = run_log_kind
+        if run_log_path is not None:
+            base["run_log_path"] = run_log_path
         if env is Environment.dev:
             return cls(
                 environment=env,
@@ -396,9 +519,31 @@ def load_settings(
     serve = data.get("serve", {})
     can_stream = bool(serve["can_stream"]) if "can_stream" in serve else None
     allow_edit = bool(serve["allow_edit"]) if "allow_edit" in serve else None
+    allow_user_clarification = (
+        bool(serve["allow_user_clarification"]) if "allow_user_clarification" in serve else None
+    )
+    ui_display_mode = str(serve["ui_display_mode"]) if "ui_display_mode" in serve else None
+    enable_result_sanity_check = (
+        bool(serve["enable_result_sanity_check"])
+        if "enable_result_sanity_check" in serve
+        else None
+    )
+    enable_mistake_memory = (
+        bool(serve["enable_mistake_memory"]) if "enable_mistake_memory" in serve else None
+    )
     cors_origins = (
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
+
+    # Optional [logging] table (ADR 0004 checkpointer + portable run log).
+    logging_tbl = data.get("logging", {})
+    ckpt_kind = logging_tbl.get("conversation_checkpointer_kind")
+    ckpt_path = logging_tbl.get("conversation_checkpointer_path")
+    ckpt_dsn_env = logging_tbl.get("conversation_checkpointer_dsn_env")
+    run_log_kind = logging_tbl.get("run_log_kind")
+    run_log_path = logging_tbl.get("run_log_path")
+
+    notes_tbl = data.get("notes", {})
 
     settings = Settings.for_env(
         env,
@@ -407,8 +552,60 @@ def load_settings(
         corpus_root=str(corpus_root),
         can_stream=can_stream,
         allow_edit=allow_edit,
+        allow_user_clarification=allow_user_clarification,
+        ui_display_mode=ui_display_mode,
+        enable_result_sanity_check=enable_result_sanity_check,
+        enable_mistake_memory=enable_mistake_memory,
         cors_origins=cors_origins,
+        conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
+        conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,
+        conversation_checkpointer_dsn_env=(
+            str(ckpt_dsn_env) if ckpt_dsn_env is not None else None
+        ),
+        run_log_kind=str(run_log_kind) if run_log_kind is not None else None,
+        run_log_path=str(run_log_path) if run_log_path is not None else None,
     )
+
+    knob_overrides: dict[str, Any] = {}
+    for src, keys in (
+        (
+            notes_tbl,
+            (
+                "always_note_global_max",
+                "always_note_char_max",
+                "pin_triggers_enabled",
+                "pin_require_certified",
+                "pin_max",
+            ),
+        ),
+        (
+            logging_tbl,
+            (
+                "log_full_content",
+                "log_full_content_ack",
+                "log_row_previews",
+                "log_full_content_ttl_days",
+            ),
+        ),
+    ):
+        for k in keys:
+            if k in src:
+                knob_overrides[k] = src[k]
+
+    # Optional [eval] table (docs/plans/eval-concurrency-design.md). TOML keys are
+    # short (``workers`` / ``serve_workers`` / ``build_workers``); they map onto the
+    # ``eval_*`` fields on Settings.
+    eval_tbl = data.get("eval", {})
+    for toml_key, field_name in (
+        ("workers", "eval_workers"),
+        ("serve_workers", "eval_serve_workers"),
+        ("build_workers", "eval_build_workers"),
+    ):
+        if toml_key in eval_tbl:
+            knob_overrides[field_name] = int(eval_tbl[toml_key])
+
+    if knob_overrides:
+        settings = replace(settings, **knob_overrides)
 
     # Optional [runtime] overrides for the environment toggles, so a deployment
     # can soft-warn on suspect columns without switching the whole env.

@@ -1,0 +1,127 @@
+asset_type: table
+id: tbl_archeology_scanconservation
+schema: public
+physical_name: scanconservation
+columns:
+- physical_name: cureregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: harmassess
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - Severe
+  - Moderate
+  - Moderate
+  - null
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: curerank
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Critical
+  - Low
+  - High
+  - High
+  - Low
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: structstate
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Moderate
+  - Moderate
+  - Moderate
+  - Stable
+  - Unstable
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: intervhistory
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Minor
+  - Major
+  - null
+  - Minor
+  - Minor
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: priordocs
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - Partial
+  - null
+  - Partial
+  - Partial
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

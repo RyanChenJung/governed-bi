@@ -51,7 +51,13 @@ class ServeStack:
     datasource: DataSourceConfig | None = None  # which DB the serve path executes against
     chat_model: Any | None = None  # raw LangChain BaseChatModel driving the agent core
     can_clarify: bool = False  # serve-time HITL (ask_user) is available (streaming + live model)
-    clarify_checkpointer: Any | None = None  # inner-agent saver for interrupt/resume (in-mem, per process)
+    clarify_checkpointer: Any | None = None  # inner-agent saver for interrupt/resume (H10 durable)
+    # Overrides the fold Enhancer's default fresh-from-Settings model (see
+    # analyst.agent.build_agent_core) — production leaves this None; tests set it
+    # to a fake/stub distinct from chat_model, so the Enhancer's side-channel call
+    # is verifiably decoupled from the main-turn model instance.
+    enhancer_chat_model: Any | None = None
+    conversation_checkpointer: Any | None = None  # durable outer-chat saver (ADR 0004 L3)
 
     def open_connector(self, *, connect_timeout: float | None = None) -> "Connector":
         """Open a fresh read-only connector for one request (caller closes it).
@@ -156,6 +162,12 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
     Secrets (API key, DSN) remain in the environment / ``.env``.
     """
     settings = settings if settings is not None else load_settings()
+
+    # H11: prod + full-content without explicit ack fails loud.
+    from ..analyst.run_log import assert_full_content_policy
+
+    assert_full_content_policy(settings)
+
     datasource = settings.datasource
     root = resolve_corpus_root(settings.corpus_root)
 
@@ -166,16 +178,41 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
     can_edit = settings.allow_edit
 
     # Serve-time HITL (ask_user -> interrupt) needs a checkpointer for the inner
-    # agent to pause/resume; it is only reachable via the streaming chat graph
-    # (graph_app), never the REST /chat path (no outer checkpointer there). The
-    # saver is in-memory / per-process for v1 (durable Postgres is deferred).
+    # agent to pause/resume. H10/F7: durable via make_clarify_checkpointer
+    # (distinct path); InMemorySaver when kind=memory.
+    #
+    # Built whenever a live model exists, REGARDLESS of
+    # ``allow_user_clarification`` (Round D3): the toggle now has a live
+    # override (``api/runtime_toggles.py``) that a `/settings/...` call can
+    # flip mid-process, with no restart. If construction stayed gated on the
+    # startup value of the toggle, flipping it on later would have no
+    # checkpointer to use. The checkpointer being built is therefore no longer
+    # itself the "is clarify on" switch — per-turn callers (``graph_app.py``'s
+    # ``answer()`` node) decide whether to actually PASS this checkpointer down
+    # by checking the live override fresh each turn; ``analyst/agent.py``'s
+    # ``clarify_on = clarify_checkpointer is not None`` still holds, just fed a
+    # live-checked value instead of this frozen one directly.
     clarify_checkpointer = None
     can_clarify = False
     if has_live:
-        from langgraph.checkpoint.memory import InMemorySaver
+        from ..analyst.run_log import make_clarify_checkpointer
 
-        clarify_checkpointer = InMemorySaver()
-        can_clarify = bool(settings.can_stream)
+        try:
+            clarify_checkpointer = make_clarify_checkpointer(settings)
+        except Exception:
+            clarify_checkpointer = None
+        if clarify_checkpointer is None:
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            clarify_checkpointer = InMemorySaver()
+        # Informational only (the startup value) — `/capabilities` recomputes
+        # this live (see ``api/app.py``), since this field never changes again
+        # once the stack is built.
+        can_clarify = bool(settings.can_stream) and settings.allow_user_clarification
+
+    # conversation_checkpointer is lazy — built only by build_standalone_chat_graph
+    # (L3). Eager construction here opened a sqlite file on every build_stack /
+    # test import while make_graph never used it.
 
     # Identity is a DEMO seam (D1: showcase, not a product). This repo serves a
     # single all-access identity; per-user identity + gateway RLS live in the private
@@ -220,6 +257,7 @@ def build_stack(settings: Settings | None = None) -> ServeStack:
         chat_model=chat_model,
         can_clarify=can_clarify,
         clarify_checkpointer=clarify_checkpointer,
+        conversation_checkpointer=None,
     )
     # Fail fast when TOML points at Postgres/Redshift that isn't up (or a missing
     # SQLite file). Without this, the first chat turn hangs on TCP connect.

@@ -339,6 +339,409 @@ def test_build_curated_corpus_with_sme_folds_human(bird_connector, tmp_path: Pat
     assert manifest["agent_ran"] is False
 
 
+def test_apply_answered_clarifications_to_corpus_matches_sme_fold(tmp_path: Path):
+    """Round 3: an admin answering via the human-facing API
+    (``POST /clarifications/{id}/answer``) just rewrites clarifications.jsonl
+    in place — nothing re-reads it. ``apply_answered_clarifications_to_corpus``
+    is the poll step that picks those records up and folds them into an
+    already-served corpus, reusing the same ``AssetBag`` fold the
+    SimulatedSme path uses. This checks both a freeform-answered record and a
+    choice-answered record, and confirms the freeform one lands in the exact
+    same format the existing SimulatedSme/deterministic fold produces.
+    """
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+
+    def _table(name: str) -> TableAsset:
+        return TableAsset(
+            id=f"tbl_{schema}_{name}",
+            schema=schema,
+            physical_name=name,
+            columns=[
+                Column(
+                    physical_name="amount",
+                    physical_type="DECIMAL",
+                    logical_type=LogicalType.decimal,
+                    nullable=True,
+                    is_unique=False,
+                )
+            ],
+        )
+
+    orders = _table("orders")
+    customers = _table("customers")
+
+    # Freeform record, as SimulatedSme's fill_clarifications_with_responder
+    # would produce it.
+    freeform_rec = ClarificationRecord(
+        id="q001",
+        scope="table:orders",
+        question="What is `orders`?",
+        status=ClarificationRecordStatus.answered,
+        answer="Customer purchase orders.",
+        answered_by="sme",
+    )
+    # Reference: what the EXISTING deterministic fold (used by
+    # build_curated_corpus_with_sme when model=None) produces for that record.
+    reference_bag = AssetBag.from_tables(schema, [orders.model_copy(deep=True)])
+    reference_bag.apply_answered_clarifications([freeform_rec])
+    reference_table = reference_bag.tables["orders"]
+
+    # Choice-answered record, as it would arrive via the human-facing API
+    # (choice_id only — no freeform "answer" text).
+    choice_rec = ClarificationRecord(
+        id="q002",
+        scope="table:customers",
+        question="What is `customers`?",
+        choices=[
+            {"id": "opt_a", "label": "Customers who bought root beer."},
+            {"id": "opt_b", "label": "Customers who bought ginger beer."},
+        ],
+        allow_freeform=False,
+        status=ClarificationRecordStatus.answered,
+        answer_choice_id="opt_a",
+        answered_by="admin",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders, customers])
+    write_clarifications(
+        clarifications_path(corpus_root), [freeform_rec, choice_rec]
+    )
+
+    applied = apply_answered_clarifications_to_corpus(corpus_root, schema)
+    assert applied == 2
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    tables = {a.physical_name: a for a in corpus.tables()}
+
+    # Freeform answer: exact format parity with the existing SimulatedSme
+    # deterministic-fold path.
+    folded_orders = tables["orders"]
+    assert folded_orders.description == reference_table.description
+    assert folded_orders.confidence == reference_table.confidence
+    assert folded_orders.audit.provenance.source == reference_table.audit.provenance.source
+    assert folded_orders.audit.provenance.status == reference_table.audit.provenance.status
+    assert folded_orders.audit.provenance.by == reference_table.audit.provenance.by == "sme"
+
+    # Choice answer: the picked choice's label becomes the corpus fact text.
+    folded_customers = tables["customers"]
+    assert folded_customers.description == "Customers who bought root beer."
+    assert folded_customers.audit.provenance.by == "admin"
+
+    # Idempotent: both records are marked converted; re-running folds nothing.
+    records = load_clarifications(clarifications_path(corpus_root))
+    assert all(r.converted_to_corpus for r in records)
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
+
+
+def test_apply_answered_clarifications_to_corpus_folds_live_chat_source(tmp_path: Path):
+    """Round 8: a live ``ask_user`` question (Round 6) logs a
+    ``source="live_chat"`` ledger record with scope ``live_chat:<id>`` (not a
+    ``table:`` scope), and answering it from the admin tab — same
+    ``POST /clarifications/{id}/answer`` route a curator-sourced record uses —
+    should fold identically: ``apply_answered_clarifications_to_corpus`` runs
+    generically over every answered record regardless of ``source``. Since the
+    scope doesn't match ``table:Name[.col]``, it takes the ``record_caveats``
+    path (like any other non-asset-scoped record) and lands as a NoteAsset,
+    proving the fold isn't filtered or special-cased by source.
+    """
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+
+    # Shape produced by tools.py's _log_live_clarification + the ledger sync
+    # after the live user answers: source="live_chat", scope="live_chat:<id>"
+    # (not "table:..."), answered_by="live_chat_user".
+    live_chat_rec = ClarificationRecord(
+        id="q_live_001",
+        scope="live_chat:q_live_001",
+        question="Should refunds count as negative revenue or be excluded?",
+        status=ClarificationRecordStatus.answered,
+        answer="Exclude refunds from revenue entirely.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+    write_clarifications(clarifications_path(corpus_root), [live_chat_rec])
+
+    folded = apply_answered_clarifications_to_corpus(corpus_root, schema)
+    # Folded via record_caveats (non-"table:" scope), not apply_answered_clarifications.
+    assert folded == 1
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    notes = [a for a in corpus.assets if isinstance(a, NoteAsset)]
+    assert len(notes) == 1
+    assert notes[0].summary == "Exclude refunds from revenue entirely."
+
+    # Idempotent, same as the curator-sourced path.
+    records = load_clarifications(clarifications_path(corpus_root))
+    assert records[0].converted_to_corpus is True
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 0
+
+
+def test_apply_answered_clarifications_to_corpus_reuses_notes_across_separate_calls(
+    tmp_path: Path,
+):
+    """Regression: ``apply_answered_clarifications_to_corpus`` rebuilds a fresh
+    ``AssetBag`` from ``corpus_root`` on every call (each answered live-chat
+    clarification folds in its own call — see ``analyst.tools
+    ._fold_answered_clarifications``). The rebuild loop seeded ``bag.joins`` /
+    ``bag.metrics`` / ``bag.terms`` / ``bag.few_shots`` from the assets already
+    on disk, but had no ``elif asset.asset_type == "note"`` branch — so a
+    ``NoteAsset`` folded by an EARLIER call was silently dropped from the
+    ``AssetBag`` a LATER call builds, even though the file is still on disk.
+
+    That meant the Enhancer's ``existing_notes`` argument (see
+    ``curator.enhancer.Enhancer.decide`` / ``AssetBag.record_caveats``) was
+    always empty for any note created in a prior fold call — the Enhancer had
+    no way to recognize a second, differently-worded clarification about the
+    same concept as a duplicate, because it was never shown the first note at
+    all. (Diagnosed live: a real Bedrock-backed run of two separate
+    conversations both defining a "gold member" threshold minted two separate
+    notes instead of reinforcing one — see ``tests/test_enhancer_live.py``.)
+
+    This proves the fix directly: the note created by the FIRST fold call is
+    present in ``existing_notes`` on the SECOND call's Enhancer prompt, and a
+    duplicate decision reinforces the existing note rather than being unable
+    to reference it.
+    """
+    import json
+
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+        load_clarifications,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+
+    schema = "beer_factory"
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+
+    rec_1 = ClarificationRecord(
+        id="q_live_010",
+        scope="live_chat:q_live_010",
+        question="What counts as a 'gold member'?",
+        status=ClarificationRecordStatus.answered,
+        answer="A gold member is a customer whose total spend exceeds $150.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+    write_clarifications(clarifications_path(corpus_root), [rec_1])
+
+    new_concept_json = json.dumps(
+        {
+            "concept_name": "gold_member",
+            "asset_type": "note",
+            "generalized_definition": (
+                "A gold member is a customer whose total spend exceeds $150."
+            ),
+            "base_table": None,
+            "expression": None,
+            "duplicate_of": None,
+            "conflict_with": None,
+        }
+    )
+    folded_1 = apply_answered_clarifications_to_corpus(
+        corpus_root, schema, chat=StaticChatClient(new_concept_json)
+    )
+    assert folded_1 == 1
+
+    corpus_after_1 = load_corpus(corpus_root, schema=schema)
+    notes_after_1 = [a for a in corpus_after_1.assets if isinstance(a, NoteAsset)]
+    assert len(notes_after_1) == 1
+    existing_note = notes_after_1[0]
+
+    # Second call, second answered clarification — a SEPARATE
+    # apply_answered_clarifications_to_corpus invocation, exactly like two
+    # separate live-chat conversations each triggering their own fold.
+    rec_2 = ClarificationRecord(
+        id="q_live_011",
+        scope="live_chat:q_live_011",
+        question="How do we define a 'top-tier buyer'?",
+        status=ClarificationRecordStatus.answered,
+        answer="Top-tier buyers are customers whose combined spend is over $150.",
+        answered_by="live_chat_user",
+        source="live_chat",
+    )
+    records = load_clarifications(clarifications_path(corpus_root))
+    write_clarifications(clarifications_path(corpus_root), [*records, rec_2])
+
+    duplicate_json = json.dumps(
+        {
+            "concept_name": "gold_member",
+            "asset_type": "note",
+            "generalized_definition": existing_note.summary,
+            "base_table": None,
+            "expression": None,
+            "duplicate_of": existing_note.id,
+            "conflict_with": None,
+        }
+    )
+    chat_2 = StaticChatClient(duplicate_json)
+    folded_2 = apply_answered_clarifications_to_corpus(corpus_root, schema, chat=chat_2)
+    assert folded_2 == 1
+
+    # The bug: without seeding bag.notes from disk, this would be `[]` even
+    # though `existing_note` is sitting right there in corpus_root.
+    assert chat_2.calls, "Enhancer should have been invoked for the second fold"
+    prompt_payload = json.loads(chat_2.calls[-1][1].split("\n\n", 1)[1])
+    existing_note_ids = {n["id"] for n in prompt_payload["existing_notes"]}
+    assert existing_note.id in existing_note_ids, (
+        f"existing note {existing_note.id!r} was not shown to the Enhancer on the "
+        f"second fold call — existing_notes={prompt_payload['existing_notes']!r}"
+    )
+
+    # And the duplicate decision actually reinforced the SAME note rather than
+    # minting a second one.
+    corpus_after_2 = load_corpus(corpus_root, schema=schema)
+    notes_after_2 = [a for a in corpus_after_2.assets if isinstance(a, NoteAsset)]
+    assert len(notes_after_2) == 1, (
+        f"expected the duplicate to reinforce the existing note, not mint a new "
+        f"one: {[n.id for n in notes_after_2]}"
+    )
+    reinforced = notes_after_2[0]
+    provenance = reinforced.audit.provenance if reinforced.audit else None
+    assert "q_live_011" in list(getattr(provenance, "reinforced_by", None) or [])
+
+
+def test_assumption_rows_pick_up_answered_clarification_with_question_intact(tmp_path: Path):
+    """Round 9: the admin "agreed assumptions" log view (``presenter.assumption_rows``
+    / ``GET /corpus/assumptions``) reads ``NoteAsset.source_question`` — the field
+    ``AssetBag.record_caveats`` now stamps when folding an answered clarification
+    (previously only the resolved answer text survived, as ``summary``; the
+    original question was lost). Answering a clarification via the existing
+    ``apply_answered_clarifications_to_corpus`` flow must produce a row with the
+    question text intact, plus answered_by/source."""
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import Column, LogicalType, TableAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        ClarificationRecordStatus,
+        clarifications_path,
+    )
+    from governed_bi.curator.pipeline import apply_answered_clarifications_to_corpus
+    from governed_bi.viz import presenter
+
+    schema = "beer_factory"
+    orders = TableAsset(
+        id=f"tbl_{schema}_orders",
+        schema=schema,
+        physical_name="orders",
+        columns=[
+            Column(
+                physical_name="amount",
+                physical_type="DECIMAL",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+    rec = ClarificationRecord(
+        id="q_live_002",
+        scope="live_chat:q_live_002",
+        question="Should refunds count as negative revenue or be excluded?",
+        status=ClarificationRecordStatus.answered,
+        answer="Exclude refunds from revenue entirely.",
+        answered_by="admin_jane",
+        source="live_chat",
+    )
+
+    corpus_root = tmp_path / "corpus"
+    write_corpus(corpus_root, schema, [orders])
+    write_clarifications(clarifications_path(corpus_root), [rec])
+
+    assert apply_answered_clarifications_to_corpus(corpus_root, schema) == 1
+
+    corpus = load_corpus(corpus_root, schema=schema)
+    rows = presenter.assumption_rows(corpus)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.question == "Should refunds count as negative revenue or be excluded?"
+    assert row.answer == "Exclude refunds from revenue entirely."
+    assert row.answered_by == "admin_jane"
+    assert row.source == "live_chat"
+    assert row.answered_at  # non-empty ISO timestamp (fold time)
+
+
+def test_assumption_rows_excludes_notes_from_other_paths(tmp_path: Path):
+    """A ``NoteAsset`` created through some other path — not via
+    ``record_caveats``/an answered clarification — carries no
+    ``source_question`` and must NOT show up in the assumptions log view. Proves
+    the filter is a real marker, not "return every note typed=context"."""
+    from governed_bi.viz import presenter
+
+    schema = "beer_factory"
+    bag = AssetBag(schema=schema)
+    msg = bag.propose_note(
+        "Revenue excludes tax by convention.",
+        certified=True,
+        answered_by="curator_agent",
+    )
+    assert msg.startswith("ok:")
+
+    from governed_bi.corpus import Corpus
+
+    corpus = Corpus(assets=bag.all_assets())
+    assert presenter.assumption_rows(corpus) == []
+    # Sanity: the note exists, it just isn't clarification-derived.
+    assert len(bag.notes) == 1
+    assert next(iter(bag.notes.values())).source_question is None
+
+
 def test_deep_agent_invoke_receives_tracing_callbacks(bird_connector, tmp_path: Path, monkeypatch):
     """The curator deep agent must run with Langfuse callbacks in its config, or
     its (majority) LLM volume is invisible to the dashboard. Regression guard."""
@@ -355,7 +758,9 @@ def test_deep_agent_invoke_receives_tracing_callbacks(bird_connector, tmp_path: 
 
     rec = _RecordingAgent()
     monkeypatch.setattr(da_mod, "build_curator_agent", lambda *a, **k: rec)
-    monkeypatch.setattr(pipe_mod, "tracing_callbacks", lambda: ["LF_SENTINEL"])
+    monkeypatch.setattr(
+        pipe_mod, "tracing_callbacks", lambda **_kwargs: ["LF_SENTINEL"]
+    )
 
     gateway = Gateway(bird_connector)
     train = [

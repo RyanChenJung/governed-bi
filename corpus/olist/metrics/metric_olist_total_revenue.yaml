@@ -1,0 +1,23 @@
+asset_type: metric
+id: metric_olist_total_revenue
+name: total_revenue
+base_table: tbl_olist_payments
+expression: SUM(payments.amount)
+dimensions: []
+rules: []
+confidence: 0.75
+source_question: 'By "revenue" do you mean total payments actually collected (sum
+  of olist.payments.amount), or gross merchandise value from line items (sum of unit_price,
+  or unit_price minus discount, across olist.line_items)? Also, should this include
+  all transactions regardless of status, or only completed/non-cancelled, non-returned
+  ones? (why: The warehouse has no curated metric definition for "revenue" — it could
+  be computed from payments.amount (cash collected) or from line_items (unit_price,
+  possibly net of discount), and could include or exclude cancelled/returned transactions.
+  These would produce materially different numbers.)'
+source_kind: live_chat
+audit:
+  provenance:
+    source: human
+    status: certified
+    source_refs: []
+    by: live_chat_user

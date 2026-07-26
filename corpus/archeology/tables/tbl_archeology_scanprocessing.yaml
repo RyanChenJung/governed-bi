@@ -1,0 +1,322 @@
+asset_type: table
+id: tbl_archeology_scanprocessing
+schema: public
+physical_name: scanprocessing
+columns:
+- physical_name: flowregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'SN20065                                           '
+  - 'SN29799                                           '
+  - 'SN83019                                           '
+  - 'SN60801                                           '
+  - 'SN64520                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: flowsoft
+  physical_type: character varying(25)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - RealityCapture
+  - CloudCompare
+  - Agisoft
+  - RealityCapture
+  - Agisoft
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: flowhrs
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '21.90'
+  - '34.90'
+  - '25.70'
+  - '16.50'
+  - '42.60'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: proccpu
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 81
+  - 100
+  - 67
+  - 80
+  - 63
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: memusagegb
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '70.30'
+  - '13.40'
+  - '51.70'
+  - '79.50'
+  - '71.50'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: procgpu
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 84
+  - 56
+  - 66
+  - 78
+  - 69
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: stashloc
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Local
+  - Network
+  - Network
+  - Cloud
+  - Cloud
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: safebak
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'In Progress                                       '
+  - 'Completed                                         '
+  - 'Pending                                           '
+  - 'Completed                                         '
+  - 'Pending                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: datalevel
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Confidential
+  - Public
+  - Confidential
+  - Restricted
+  - Confidential
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: metabench
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Dublin Core
+  - CIDOC CRM
+  - CIDOC CRM
+  - Custom
+  - Dublin Core
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: coordframe
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Local
+  - WGS84
+  - Custom
+  - Local
+  - WGS84
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: elevref
+  physical_type: character varying(16)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Arbitrary
+  - Local
+  - Sea Level
+  - Arbitrary
+  - Local
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: remaingb
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '983.50'
+  - '599.60'
+  - '306.10'
+  - '487.30'
+  - '92.10'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: stationlink
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Partial                                           '
+  - 'Partial                                           '
+  - 'Partial                                           '
+  - 'Partial                                           '
+  - 'Yes                                               '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: camcal
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Invalid
+  - Required
+  - Required
+  - Invalid
+  - Calibrated
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: lensdist
+  physical_type: character varying(14)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Corrected
+  - Unknown
+  - Unknown
+  - Corrected
+  - Uncorrected
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: colortune
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Required                                          '
+  - 'Required                                          '
+  - 'Adjusted                                          '
+  - 'Required                                          '
+  - null
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: flowstage
+  physical_type: character varying(18)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Aligned
+  - Aligned
+  - Meshed
+  - Final
+  - Aligned
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fmtver
+  physical_type: character(3)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.3'
+  - '2.7'
+  - '4.0'
+  - '5.7'
+  - '4.9'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

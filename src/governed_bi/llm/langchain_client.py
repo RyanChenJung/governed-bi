@@ -49,6 +49,9 @@ def _message_text(message: Any) -> str:
 
     Handles both a string ``content`` and the Responses-API content-block list
     (reasoning models), preferring the v1 ``.text`` accessor when present.
+
+    Note: reasoning trace is logged separately via LangSmith/tracing callbacks;
+    this function extracts only the final answer text.
     """
     text = getattr(message, "text", None)
     if isinstance(text, str):  # v1 exposes .text as a property returning str
@@ -62,7 +65,8 @@ def _message_text(message: Any) -> str:
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):  # list of content blocks
-        parts = [b.get("text", "") for b in content if isinstance(b, dict)]
+        # Extract text blocks only (reasoning traces go to observability)
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") != "thinking"]
         return "".join(parts).strip()
     return str(content).strip()
 
@@ -77,6 +81,7 @@ class LangChainChatClient:
 
     def __init__(self, model: Any) -> None:
         self.model = model
+        self.last_usage_metadata: dict | None = None  # set by complete() for L4 capture
 
     @classmethod
     def from_config(cls, models: "ModelConfig") -> "LangChainChatClient":
@@ -88,6 +93,7 @@ class LangChainChatClient:
         kwargs: dict[str, Any] = {"model": models.llm_model}
         if models.llm_reasoning_effort:
             # Reasoning models route to the Responses API via this dict.
+            # The reasoning trace is automatically included in the response
             kwargs["reasoning"] = {"effort": models.llm_reasoning_effort}
         if models.llm_max_output_tokens:
             kwargs["max_tokens"] = models.llm_max_output_tokens
@@ -121,7 +127,26 @@ class LangChainChatClient:
             callbacks = tracing_callbacks()
             config = {"callbacks": callbacks} if callbacks else None
             message = self.model.invoke(messages, config=config)
+        usage = getattr(message, "usage_metadata", None)
+        self.last_usage_metadata = dict(usage) if usage else None
         return _message_text(message)
+
+
+def bind_temperature(model: Any, temperature: float) -> Any:
+    """Return a temperature-varied view of a LangChain chat model.
+
+    LangChain chat models accept generation kwargs at bind-time via
+    ``.bind(...)``, which returns a ``RunnableBinding`` wrapping the original
+    model — no re-construction (no re-resolving credentials/region/etc.) is
+    needed to get a second, differently-configured "instance". This is safe to
+    chain: ``build_agent_core`` layers its own ``.bind(parallel_tool_calls=False)``
+    on top for Bedrock models, and ``middleware._supports_parallel_tool_calls``
+    already unwraps ``.bound`` to find the underlying provider class when
+    deciding whether that's safe, so a temperature-bound model behaves as a
+    drop-in for anywhere a plain chat model is accepted (eval candidate
+    generation; see ``eval/candidates.py``).
+    """
+    return model.bind(temperature=temperature)
 
 
 class LangChainEmbedder:
@@ -173,6 +198,44 @@ class LangChainEmbedder:
 def _build_bedrock_chat(models: "ModelConfig") -> Any:
     _require_langchain_aws()
     from langchain_aws import ChatBedrockConverse  # noqa: PLC0415 (lazy: bedrock extra)
+    from langchain_core.messages import AIMessage, ToolMessage  # noqa: PLC0415
+
+    class _SanitizedBedrockConverse(ChatBedrockConverse):
+        """Patches message history before sending to Bedrock.
+
+        Bedrock Converse requires every tool_use block in an assistant message to
+        have a corresponding toolResult in the immediately following user message.
+        LangGraph's message reducers can occasionally produce dangling tool_calls
+        (e.g. when a sub-graph stops mid-turn). This subclass fills those gaps with
+        a synthetic cancelled ToolMessage so Bedrock validation passes.
+        """
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # type: ignore[override]
+            messages = _patch_dangling_tool_calls(messages)
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    def _patch_dangling_tool_calls(messages):
+        answered: set[str] = {
+            m.tool_call_id
+            for m in messages
+            if isinstance(m, ToolMessage) and m.tool_call_id
+        }
+        patched = []
+        for msg in messages:
+            patched.append(msg)
+            if not isinstance(msg, AIMessage):
+                continue
+            for tc in msg.tool_calls:
+                if tc.get("id") and tc["id"] not in answered:
+                    patched.append(
+                        ToolMessage(
+                            content="(cancelled — tool call was not completed)",
+                            name=tc.get("name", "unknown"),
+                            tool_call_id=tc["id"],
+                        )
+                    )
+                    answered.add(tc["id"])
+        return patched
 
     kwargs: dict[str, Any] = {"model": models.llm_model}
     if models.region:
@@ -188,7 +251,7 @@ def _build_bedrock_chat(models: "ModelConfig") -> Any:
     # Converse request field differs between Anthropic and Nova — so it is not
     # auto-translated from ``llm_reasoning_effort`` here. Set it per deployment
     # via a local overlay if a specific model needs it.
-    return ChatBedrockConverse(**kwargs)
+    return _SanitizedBedrockConverse(**kwargs)
 
 
 def _build_bedrock_embeddings(models: "ModelConfig") -> Any:

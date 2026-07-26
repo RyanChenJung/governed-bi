@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from pydantic import ValidationError
 
@@ -14,26 +15,60 @@ from ..corpus.schemas import (
     ColumnRole,
     Complexity,
     FewShotAsset,
+    Governance,
     JoinAsset,
     MetricAsset,
+    NoteAsset,
+    NoteKind,
     Provenance,
     ProvenanceSource,
     ProvenanceStatus,
     Reliability,
     ReliabilityStatus,
-    RuleAsset,
-    RuleKind,
     TableAsset,
     TermAsset,
 )
 from ..corpus.serialize import write_corpus
-from .clarifications import ClarificationRecord, ClarificationRecordStatus, parse_scope
+from .clarifications import (
+    ClarificationRecord,
+    ClarificationRecordStatus,
+    parse_scope,
+    resolve_answer_text,
+)
+from .enhancer import Enhancer, EnhancerDecision, EnhancerError
 
-_Asset = TableAsset | JoinAsset | MetricAsset | TermAsset | FewShotAsset | RuleAsset
+if TYPE_CHECKING:
+    from ..llm import ChatClient
+
+logger = logging.getLogger("governed_bi.curator")
+
+
+@dataclass
+class CaveatFoldCounts:
+    """Breakdown of what :meth:`AssetBag.record_caveats_detail` did with each
+    answered caveat-scoped clarification — the hook Round B (reinforce a
+    duplicate) and Round C (surface a conflict for review) build on."""
+
+    created: int = 0  # a new MetricAsset or NoteAsset was written
+    duplicate: int = 0  # recognized as restating an existing asset; reinforced in place (Round B)
+    conflict: int = 0  # contradicts an existing asset; flagged, not overwritten
+    legacy: int = 0  # chat=None, or the Enhancer errored: verbatim NoteAsset fallback
+
+    @property
+    def total(self) -> int:
+        return self.created + self.duplicate + self.conflict + self.legacy
+
+_Asset = TableAsset | JoinAsset | MetricAsset | TermAsset | FewShotAsset | NoteAsset
 
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "x"
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _inference_audit(
@@ -42,8 +77,9 @@ def _inference_audit(
     source: ProvenanceSource = ProvenanceSource.curator,
     status: ProvenanceStatus = ProvenanceStatus.proposed,
     by: str | None = None,
+    built_at: str | None = None,
 ) -> Audit:
-    prov = Provenance(source=source, status=status, model=model)
+    prov = Provenance(source=source, status=status, model=model, built_at=built_at)
     if by is not None:
         data = prov.model_dump(mode="python")
         data["by"] = by
@@ -61,7 +97,7 @@ class AssetBag:
     metrics: dict[str, MetricAsset] = field(default_factory=dict)
     terms: dict[str, TermAsset] = field(default_factory=dict)
     few_shots: dict[str, FewShotAsset] = field(default_factory=dict)
-    rules: dict[str, RuleAsset] = field(default_factory=dict)
+    notes: dict[str, NoteAsset] = field(default_factory=dict)
     model_name: str | None = None
 
     @classmethod
@@ -80,7 +116,7 @@ class AssetBag:
             *self.metrics.values(),
             *self.terms.values(),
             *self.few_shots.values(),
-            *self.rules.values(),
+            *self.notes.values(),
         ]
 
     def table_id(self, physical_name: str) -> str | None:
@@ -245,6 +281,8 @@ class AssetBag:
         confidence: float = 0.6,
         certified: bool = False,
         answered_by: str | None = None,
+        source_question: str | None = None,
+        source_kind: str | None = None,
     ) -> str:
         base_id = self.table_id(base_table)
         if base_id is None:
@@ -263,6 +301,8 @@ class AssetBag:
                     "base_table": base_id,
                     "expression": expression,
                     "confidence": confidence,
+                    "source_question": source_question,
+                    "source_kind": source_kind,
                     "audit": self._audit(certified=certified, answered_by=answered_by),
                 }
             )
@@ -555,7 +595,8 @@ class AssetBag:
         for rec in records:
             if rec.status is not ClarificationRecordStatus.answered:
                 continue
-            if not rec.answer:
+            text = resolve_answer_text(rec)
+            if not text:
                 continue
             try:
                 table, column = parse_scope(rec.scope)
@@ -565,7 +606,7 @@ class AssetBag:
             if column is None:
                 msg = self.annotate_table(
                     table,
-                    description=rec.answer,
+                    description=text,
                     confidence=0.9,
                     certified=True,
                     answered_by=by,
@@ -574,7 +615,7 @@ class AssetBag:
                 msg = self.annotate_column(
                     table,
                     column,
-                    description=rec.answer,
+                    description=text,
                     confidence=0.9,
                     certified=True,
                     answered_by=by,
@@ -583,62 +624,552 @@ class AssetBag:
                 applied += 1
         return applied
 
-    def propose_rule(
+    def propose_note(
         self,
-        statement: str,
+        summary: str,
         *,
-        kind: RuleKind = RuleKind.context,
+        kind: NoteKind = NoteKind.context,
         scope: Iterable[str] = (),
         confidence: float = 0.7,
         certified: bool = False,
         answered_by: str | None = None,
+        source_question: str | None = None,
+        source_kind: str | None = None,
+        id_hint: str | None = None,
     ) -> str:
-        """Record a governance rule/caveat (a gotcha serve should heed)."""
-        statement = (statement or "").strip()
-        if not statement:
-            return "error: empty rule statement"
-        rid = f"rule_{_slug(self.schema)}_{len(self.rules) + 1}"
+        """Record a governed note/caveat that serve should heed.
+
+        ``source_question``/``source_kind`` are set when this note is folded
+        from an answered clarification (see ``record_caveats``) — they preserve
+        the original question + its origin (``curator``/``live_chat``) for the
+        admin "agreed assumptions" log view. Both default to ``None`` for notes
+        created through any other path.
+
+        ``id_hint`` (e.g. an Enhancer's ``concept_name``) mints a stable,
+        concept-based id (``note_<schema>_<slug>``, de-duplicated with a numeric
+        suffix on collision) instead of the default sequential
+        ``note_<schema>_<n>``, so a later duplicate/conflict decision can
+        reference this note by a meaningful id. Omit for the pre-existing
+        sequential scheme.
+        """
+        summary = (summary or "").strip()
+        if not summary:
+            return "error: empty note summary"
+        if id_hint:
+            base_id = f"note_{_slug(self.schema)}_{_slug(id_hint)}"
+            note_id = base_id
+            suffix = 2
+            while note_id in self.notes:
+                note_id = f"{base_id}_{suffix}"
+                suffix += 1
+        else:
+            note_id = f"note_{_slug(self.schema)}_{len(self.notes) + 1}"
+        # A note stamped with clarification provenance also gets a built_at
+        # timestamp (fold time) for the log view — the ledger itself carries no
+        # answered-at timestamp today.
+        built_at = _now_iso() if source_question is not None else None
         try:
-            asset = RuleAsset.model_validate(
+            asset = NoteAsset.model_validate(
                 {
-                    "id": rid,
+                    "id": note_id,
                     "kind": kind,
                     "scope": list(scope),
-                    "statement": statement,
+                    "summary": summary,
                     "confidence": confidence,
-                    "audit": self._audit(certified=certified, answered_by=answered_by),
+                    "publication_status": (
+                        ProvenanceStatus.certified if certified else ProvenanceStatus.proposed
+                    ),
+                    "source_question": source_question,
+                    "source_kind": source_kind,
+                    "audit": self._audit(
+                        certified=certified, answered_by=answered_by, built_at=built_at
+                    ),
                 }
             )
         except ValidationError as err:
-            return f"error: invalid RuleAsset: {err}"
-        self.rules[rid] = asset
-        return f"ok: wrote {rid}"
+            return f"error: invalid NoteAsset: {err}"
+        self.notes[note_id] = asset
+        return f"ok: wrote {note_id}"
 
-    def record_caveats(self, records: Iterable[ClarificationRecord]) -> int:
+    def record_caveats(
+        self,
+        records: Iterable[ClarificationRecord],
+        *,
+        chat: "ChatClient | None" = None,
+        certify: bool = True,
+    ) -> int:
         """Fold answered clarifications that don't map to an asset (``pair:`` /
-        ``query:`` scopes — trap/annotation-error findings) into governance
-        ``RuleAsset``s, so the caveat reaches the served corpus instead of dying
-        in the ledger. Runs after both fold modes (deterministic + agent).
-        Returns the number of rules recorded.
+        ``query:``/``live_chat:`` scopes — trap/annotation-error findings and
+        live ``ask_user`` answers) into governance assets, so the caveat reaches
+        the served corpus instead of dying in the ledger. Runs after both fold
+        modes (deterministic + agent). Returns the total number of records
+        handled (created + duplicate + conflict + legacy-fallback — see
+        :meth:`record_caveats_detail` for the breakdown).
+
+        ``chat`` enables the Round-A Enhancer (see ``curator.enhancer``): each
+        caveat is generalized/deduped against the schema's existing notes and
+        metrics before folding, instead of writing the literal answer text as a
+        fresh ``NoteAsset`` every time (the bug that produced 3 separate,
+        partially-contradictory "revenue" notes from 3 rephrasings of the same
+        question). ``chat=None`` (the default) keeps the legacy verbatim-note
+        behavior — every pre-existing caller/test round-trips unchanged.
+
+        ``certify`` (default True, matching every pre-existing caller) gates
+        whether an Enhancer-decided genuinely-new concept is written trusted
+        (``certified=True``, servable immediately) or as an excluded draft
+        awaiting human approval (see :meth:`_record_draft`) — the
+        ``allow_user_clarification`` settings toggle threads through to this.
+        Only affects the Enhancer's "new concept" branch; duplicate/conflict
+        handling and the ``chat=None`` legacy fallback are unchanged.
         """
-        n = 0
+        return self.record_caveats_detail(records, chat=chat, certify=certify).total
+
+    def record_caveats_detail(
+        self,
+        records: Iterable[ClarificationRecord],
+        *,
+        chat: "ChatClient | None" = None,
+        certify: bool = True,
+    ) -> "CaveatFoldCounts":
+        """Same fold as :meth:`record_caveats`, returning the created/
+        duplicate/conflict/legacy breakdown instead of a single count.
+
+        This is the hook later rounds build on: Round B (done — see
+        :meth:`_reinforce_asset`) reinforces the ``duplicate_of`` target instead
+        of no-op'ing; Round C surfaces ``conflict_with`` for human review
+        instead of just logging it.
+        """
+        counts = CaveatFoldCounts()
+        enhancer = Enhancer(chat) if chat is not None else None
         for rec in records:
-            if rec.status is not ClarificationRecordStatus.answered or not rec.answer:
+            if rec.status is not ClarificationRecordStatus.answered:
+                continue
+            text = resolve_answer_text(rec)
+            if not text:
                 continue
             try:
                 parse_scope(rec.scope)  # table:/column: scopes are handled by the fold
                 continue
             except ValueError:
-                pass  # non-asset scope (pair:/query:/…) → record as a caveat
-            msg = self.propose_rule(
-                rec.answer,
-                kind=RuleKind.context,
+                pass  # non-asset scope (pair:/query:/live_chat:/…) → record as a caveat
+            self._fold_one_caveat(rec, text, enhancer, counts, certify=certify)
+        return counts
+
+    def _fold_one_caveat(
+        self,
+        rec: ClarificationRecord,
+        text: str,
+        enhancer: "Enhancer | None",
+        counts: "CaveatFoldCounts",
+        *,
+        certify: bool = True,
+    ) -> None:
+        by = rec.answered_by or "sme"
+        if enhancer is not None:
+            try:
+                decision = enhancer.decide(
+                    rec,
+                    existing_notes=list(self.notes.values()),
+                    existing_metrics=list(self.metrics.values()),
+                    known_tables=[t.physical_name for t in self.tables.values()],
+                )
+            except EnhancerError as err:
+                logger.warning(
+                    "Enhancer failed for clarification %s; falling back to verbatim note: %s",
+                    rec.id,
+                    err,
+                )
+                decision = None
+            if decision is not None:
+                self._apply_enhancer_decision(rec, by, decision, counts, certify=certify)
+                return
+        # chat is None, or the Enhancer errored: legacy verbatim-note fallback.
+        msg = self.propose_note(
+            text,
+            kind=NoteKind.context,
+            certified=True,
+            answered_by=by,
+            source_question=rec.question,
+            source_kind=rec.source,
+        )
+        if msg.startswith("ok:"):
+            counts.legacy += 1
+
+    def _apply_enhancer_decision(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+        counts: "CaveatFoldCounts",
+        *,
+        certify: bool = True,
+    ) -> None:
+        known_ids = self._all_asset_ids()
+        if decision.duplicate_of and decision.duplicate_of in known_ids:
+            reinforced = self._reinforce_asset(decision.duplicate_of, rec)
+            logger.info(
+                "clarification %s recognized as a duplicate of %s; no new asset written, "
+                "%s",
+                rec.id,
+                decision.duplicate_of,
+                "confidence reinforced" if reinforced else "already reinforced (no-op)",
+            )
+            counts.duplicate += 1
+            return
+        if decision.conflict_with and decision.conflict_with in known_ids:
+            msg = self._record_conflict(rec, answered_by, decision)
+            logger.warning(
+                "clarification %s CONFLICTS with existing asset %s ('%s'); not overwriting "
+                "— recorded as an unresolved conflict for human review (%s)",
+                rec.id,
+                decision.conflict_with,
+                decision.generalized_definition,
+                msg,
+            )
+            counts.conflict += 1
+            return
+        # Genuinely new concept (or a duplicate_of/conflict_with id the Enhancer
+        # hallucinated — never points at a real asset, so treat as new rather
+        # than silently dropping the clarification).
+        if not certify:
+            # allow_user_clarification is off: Minhao's fail-closed philosophy —
+            # nothing this session's Enhancer invents ships until an analyst
+            # explicitly approves it. Always written as an excluded, uncertified
+            # NoteAsset (see :meth:`_record_draft`) — a bare MetricAsset has no
+            # ``governance`` field to exclude on, so a metric-shaped decision is
+            # stored as a note body too, exactly as :meth:`_record_conflict`
+            # already does for a metric-shaped conflict.
+            msg = self._record_draft(rec, answered_by, decision)
+            if msg.startswith("ok:"):
+                counts.created += 1
+            else:
+                logger.warning(
+                    "Enhancer draft for clarification %s could not be written (%s)",
+                    rec.id,
+                    msg,
+                )
+            return
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            msg = self.upsert_metric(
+                decision.concept_name,
+                decision.base_table,
+                decision.expression,
+                confidence=0.75,
                 certified=True,
-                answered_by=rec.answered_by or "sme",
+                answered_by=answered_by,
+                source_question=rec.question,
+                source_kind=rec.source,
             )
             if msg.startswith("ok:"):
-                n += 1
-        return n
+                counts.created += 1
+                return
+            logger.warning(
+                "Enhancer proposed metric for clarification %s could not be written (%s); "
+                "recording as a note instead",
+                rec.id,
+                msg,
+            )
+        msg = self.propose_note(
+            decision.generalized_definition,
+            kind=NoteKind.context,
+            certified=True,
+            answered_by=answered_by,
+            source_question=rec.question,
+            source_kind=rec.source,
+            id_hint=decision.concept_name,
+        )
+        if msg.startswith("ok:"):
+            counts.created += 1
+
+    def _record_draft(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+    ) -> str:
+        """``allow_user_clarification=False`` fold: a genuinely new concept from
+        an answered clarification, held for human review instead of trusted
+        immediately (Minhao's fail-closed philosophy vs. this session's
+        self-correcting-in-the-moment default).
+
+        Written as a ``NoteAsset`` with ``publication_status=proposed`` AND
+        ``governance.excluded=True`` — the same shape :meth:`_record_conflict`
+        uses, and for the same reason: ``analyst/note_inject.select_notes_for_injection``
+        gates on ``governance.excluded`` alone, so that is the field that
+        actually keeps this out of the Analyst's prompt. Unlike a conflict note,
+        there is no existing asset to point at, so ``related_notes``/
+        ``conflict_status`` stay unset — a human promotes this via
+        :meth:`approve_draft`, not :meth:`resolve_conflict`.
+        """
+        body = None
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            body = f"base_table={decision.base_table}\nexpression={decision.expression}"
+        base_id = f"note_{_slug(self.schema)}_{_slug(decision.concept_name)}_draft"
+        note_id = base_id
+        suffix = 2
+        while note_id in self.notes:
+            note_id = f"{base_id}_{suffix}"
+            suffix += 1
+        audit = _inference_audit(
+            model=self.model_name,
+            source=ProvenanceSource.human,
+            status=ProvenanceStatus.proposed,
+            by=answered_by,
+            built_at=_now_iso(),
+        )
+        try:
+            asset = NoteAsset.model_validate(
+                {
+                    "id": note_id,
+                    "kind": NoteKind.context,
+                    "summary": decision.generalized_definition,
+                    "body": body,
+                    "confidence": 0.5,
+                    "publication_status": ProvenanceStatus.proposed,
+                    "source_question": rec.question,
+                    "source_kind": rec.source,
+                    "governance": Governance(
+                        excluded=True,
+                        reason="awaiting analyst approval (allow_user_clarification is off)",
+                        by=answered_by,
+                        at=_now_iso(),
+                    ),
+                    "audit": audit,
+                }
+            )
+        except ValidationError as err:
+            return f"error: invalid draft NoteAsset: {err}"
+        self.notes[note_id] = asset
+        return f"ok: wrote {note_id}"
+
+    def approve_draft(self, asset_id: str, *, answered_by: str | None = None) -> str:
+        """Promote a note written by :meth:`_record_draft` (or any other
+        excluded/proposed ``NoteAsset``) to certified + included — the human
+        approval step Minhao's philosophy requires before anything this
+        session's Enhancer invented is served.
+
+        Distinct from :meth:`resolve_conflict`: a draft has no existing target
+        asset to replace, so this just certifies the note in place and clears
+        ``governance.excluded``.
+        """
+        note = self.notes.get(asset_id)
+        if note is None:
+            return f"error: unknown draft id={asset_id!r}"
+        if note.governance is None or not note.governance.excluded:
+            return f"error: {asset_id!r} is not an excluded draft"
+        new_audit = self._audit(certified=True, answered_by=answered_by, built_at=_now_iso())
+        self.notes[asset_id] = note.model_copy(
+            update={
+                "publication_status": ProvenanceStatus.certified,
+                "governance": Governance(excluded=False),
+                "audit": new_audit,
+            }
+        )
+        return f"ok: approved {asset_id}"
+
+    def _record_conflict(
+        self,
+        rec: ClarificationRecord,
+        answered_by: str,
+        decision: "EnhancerDecision",
+    ) -> str:
+        """Round C: persist a clarification whose Enhancer decision flagged
+        ``conflict_with`` an existing ``NoteAsset``/``MetricAsset``, instead of
+        silently dropping it (the pre-Round-C behavior — see
+        ``_apply_enhancer_decision``).
+
+        Written as a ``NoteAsset`` with ``publication_status`` left at
+        ``proposed`` (never ``certified``) AND ``governance.excluded=True``.
+        The latter is what actually matters for keeping it out of the Analyst's
+        prompt: ``analyst/note_inject.select_notes_for_injection`` does not gate
+        on ``publication_status`` at all (only ``apply_always_budget`` uses it,
+        for *ordering*, not exclusion) — ``governance.excluded`` is the one field
+        that resolver checks and skips unconditionally. Belt-and-suspenders:
+        ``publication_status=proposed`` still keeps this out of anything that
+        DOES key off publication status (e.g. a future "certified only" view).
+
+        ``related_notes`` (pre-existing NoteAsset field, unused until now) holds
+        the id of the asset this conflicts with. ``conflict_status="unresolved"``
+        marks it as awaiting an admin decision (see :meth:`resolve_conflict`).
+        When the new answer is itself metric-shaped, ``body`` carries
+        ``base_table=``/``expression=`` lines so a later "replace" resolution
+        can update a conflicting MetricAsset's definition, not just a NoteAsset's
+        text — reusing the existing free-text ``body`` field rather than adding
+        a metric-shaped schema onto NoteAsset.
+        """
+        body = None
+        if decision.asset_type == "metric" and decision.base_table and decision.expression:
+            body = f"base_table={decision.base_table}\nexpression={decision.expression}"
+        base_id = f"note_{_slug(self.schema)}_{_slug(decision.concept_name)}_conflict"
+        note_id = base_id
+        suffix = 2
+        while note_id in self.notes:
+            note_id = f"{base_id}_{suffix}"
+            suffix += 1
+        audit = _inference_audit(
+            model=self.model_name,
+            source=ProvenanceSource.human,
+            status=ProvenanceStatus.proposed,
+            by=answered_by,
+            built_at=_now_iso(),
+        )
+        try:
+            asset = NoteAsset.model_validate(
+                {
+                    "id": note_id,
+                    "kind": NoteKind.context,
+                    "summary": decision.generalized_definition,
+                    "body": body,
+                    "confidence": 0.5,
+                    "publication_status": ProvenanceStatus.proposed,
+                    "source_question": rec.question,
+                    "source_kind": rec.source,
+                    "related_notes": [decision.conflict_with],
+                    "conflict_status": "unresolved",
+                    "governance": Governance(
+                        excluded=True,
+                        reason=(
+                            f"unresolved conflict with {decision.conflict_with}; "
+                            "awaiting admin review"
+                        ),
+                    ),
+                    "audit": audit,
+                }
+            )
+        except ValidationError as err:
+            return f"error: invalid conflict NoteAsset: {err}"
+        self.notes[note_id] = asset
+        return f"ok: wrote {note_id}"
+
+    def resolve_conflict(
+        self,
+        conflict_note_id: str,
+        resolution: str,
+        *,
+        answered_by: str | None = None,
+    ) -> str:
+        """Round C admin resolution action for a note written by
+        :meth:`_record_conflict`.
+
+        ``resolution="keep_existing"``: the conflict is discarded — the
+        conflicting asset is left untouched, and the conflict note is marked
+        resolved (its ``governance.excluded`` stays ``True`` forever; it never
+        becomes visible to the Analyst either way).
+
+        ``resolution="replace"``: the asset named in the conflict note's
+        ``related_notes[0]`` is updated to the conflict note's definition
+        (``summary`` for a ``NoteAsset``; ``base_table``/``expression`` parsed
+        from ``body`` for a ``MetricAsset``) and certified — the same
+        certified-human-provenance shape :meth:`_audit` gives any other
+        admin-answered fold.
+        """
+        note = self.notes.get(conflict_note_id)
+        if note is None:
+            return f"error: unknown conflict note id={conflict_note_id!r}"
+        if note.conflict_status != "unresolved":
+            return (
+                f"error: conflict {conflict_note_id!r} is already resolved "
+                f"({note.conflict_status})"
+            )
+        if resolution not in ("keep_existing", "replace"):
+            return f"error: invalid resolution={resolution!r} (expected keep_existing/replace)"
+
+        if resolution == "replace":
+            target_id = note.related_notes[0] if note.related_notes else None
+            if target_id is None:
+                return "error: conflict note has no related_notes target to replace"
+            new_audit = self._audit(
+                certified=True, answered_by=answered_by, built_at=_now_iso()
+            )
+            if target_id in self.notes:
+                existing = self.notes[target_id]
+                self.notes[target_id] = existing.model_copy(
+                    update={
+                        "summary": note.summary,
+                        "publication_status": ProvenanceStatus.certified,
+                        "audit": new_audit,
+                    }
+                )
+            elif target_id in self.metrics:
+                existing = self.metrics[target_id]
+                updates: dict = {"audit": new_audit}
+                for line in (note.body or "").splitlines():
+                    if line.startswith("base_table="):
+                        raw = line[len("base_table=") :]
+                        updates["base_table"] = self.table_id(raw) or raw
+                    elif line.startswith("expression="):
+                        updates["expression"] = line[len("expression=") :]
+                self.metrics[target_id] = existing.model_copy(update=updates)
+            else:
+                return f"error: conflict target {target_id!r} no longer exists"
+
+        resolved_status = "resolved_replaced" if resolution == "replace" else "resolved_kept_existing"
+        self.notes[conflict_note_id] = note.model_copy(
+            update={
+                "conflict_status": resolved_status,
+                "governance": Governance(
+                    excluded=True,
+                    reason=f"conflict resolved: {resolution}",
+                    by=answered_by,
+                    at=_now_iso(),
+                ),
+            }
+        )
+        return f"ok: resolved {conflict_note_id} ({resolution})"
+
+    def _reinforce_asset(self, asset_id: str, rec: ClarificationRecord) -> bool:
+        """Round B: a second, independently-worded clarification confirming the
+        same concept as an existing ``NoteAsset``/``MetricAsset`` is stronger
+        evidence than the original single answer — reinforce it in place
+        instead of the Round-A no-op.
+
+        Moves ``confidence`` halfway toward 1.0 (``new = old + (1 - old) / 2``),
+        matching the "nudge toward a ceiling, never flat-add unboundedly"
+        shape: each reinforcement asymptotically approaches full confidence
+        without ever reaching or exceeding it, so N reinforcements of an
+        already-high-confidence asset stay sane.
+
+        Tracks the reinforcement as ``Provenance.reinforced_by`` — the list of
+        ``ClarificationRecord.id``s that have confirmed this asset (``Provenance``
+        is ``extra="allow"``; this follows the same append-a-field convention
+        ``_inference_audit``'s ``by`` already uses rather than a new schema
+        field). A human or a later round can read "reinforced 3 times" straight
+        off the asset.
+
+        Idempotent: if ``rec.id`` is already in ``reinforced_by`` (e.g. a fold
+        re-run over a record the pipeline should have already marked
+        ``converted_to_corpus``), this is a no-op — returns ``False`` without
+        touching confidence or the list again. Returns ``True`` when a
+        reinforcement was actually applied.
+        """
+        target = self.notes.get(asset_id) or self.metrics.get(asset_id)
+        if target is None:
+            return False  # duplicate_of pointed at a table/join/term id; nothing to reinforce
+        provenance = target.audit.provenance if target.audit else None
+        reinforced_by = list(getattr(provenance, "reinforced_by", None) or [])
+        if rec.id in reinforced_by:
+            return False
+        reinforced_by.append(rec.id)
+        old_conf = target.confidence if target.confidence is not None else 0.6
+        new_conf = min(1.0, old_conf + (1.0 - old_conf) / 2)
+        prov_data = (
+            provenance.model_dump(mode="python")
+            if provenance is not None
+            else {"source": ProvenanceSource.human, "status": ProvenanceStatus.certified}
+        )
+        prov_data["reinforced_by"] = reinforced_by
+        new_provenance = Provenance.model_validate(prov_data)
+        new_audit = (
+            target.audit.model_copy(update={"provenance": new_provenance})
+            if target.audit is not None
+            else Audit(provenance=new_provenance)
+        )
+        updated = target.model_copy(update={"confidence": new_conf, "audit": new_audit})
+        if asset_id in self.notes:
+            self.notes[asset_id] = updated  # type: ignore[assignment]
+        else:
+            self.metrics[asset_id] = updated  # type: ignore[assignment]
+        return True
 
     def _table_id_index(self) -> dict[str, str]:
         """Map a table id or physical name to its canonical table id."""
@@ -665,7 +1196,7 @@ class AssetBag:
         be resolved at all, is left untouched (a genuine gap for the agent /
         human, not a formatting slip). Covers ``column.references``,
         ``metric.base_table``, ``join.left/right_table``, ``term.binding`` and
-        ``rule.scope``. Returns the number of fields rewritten. Runs before the
+        ``note.scope``. Returns the number of fields rewritten. Runs before the
         agent fix-pass so a stochastic LLM is never handed a deterministic
         reference problem.
         """
@@ -720,12 +1251,12 @@ class AssetBag:
             )
             n += 1
 
-        # rule.scope[] -> any canonical asset id
+        # note.scope[] -> any canonical asset id
         valid_any = self._all_asset_ids()
-        for rid, r in list(self.rules.items()):
+        for note_id, note in list(self.notes.items()):
             new_scope = []
             changed = False
-            for s in r.scope:
+            for s in note.scope:
                 if s in valid_any:
                     new_scope.append(s)
                     continue
@@ -737,7 +1268,7 @@ class AssetBag:
                 else:
                     new_scope.append(s)  # unresolvable -> leave for agent / human
             if changed:
-                self.rules[rid] = r.model_copy(update={"scope": new_scope})
+                self.notes[note_id] = note.model_copy(update={"scope": new_scope})
 
         return n
 
@@ -759,6 +1290,7 @@ class AssetBag:
         certified: bool = False,
         answered_by: str | None = None,
         existing: Audit | None = None,
+        built_at: str | None = None,
     ) -> Audit:
         if certified:
             return _inference_audit(
@@ -766,6 +1298,7 @@ class AssetBag:
                 source=ProvenanceSource.human,
                 status=ProvenanceStatus.certified,
                 by=answered_by,
+                built_at=built_at,
             )
         if existing is not None:
             return existing

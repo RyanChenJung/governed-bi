@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_archeology_scanpointcloud
+schema: public
+physical_name: scanpointcloud
+columns:
+- physical_name: cloudregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: scanresolmm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.40'
+  - '4.72'
+  - '4.90'
+  - '1.41'
+  - '3.34'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: pointdense
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 42812
+  - 974154
+  - 934361
+  - 411433
+  - 855156
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: coverpct
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '91.2'
+  - '84.7'
+  - '98.1'
+  - '88.3'
+  - '88.8'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: totalpts
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 46562436
+  - 73534012
+  - 87734478
+  - 40047207
+  - 34747634
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: clouddense
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 9449
+  - 431
+  - 1746
+  - 7553
+  - 7282
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: lappct
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '31.3'
+  - '48.6'
+  - '31.7'
+  - '39.9'
+  - '55.6'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: noisedb
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '1.318'
+  - '1.788'
+  - '1.790'
+  - '1.041'
+  - '1.829'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: refpct
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '11.0'
+  - '65.4'
+  - '53.8'
+  - '67.4'
+  - '18.5'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

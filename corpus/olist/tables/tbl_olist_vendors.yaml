@@ -1,0 +1,112 @@
+asset_type: table
+id: tbl_olist_vendors
+schema: olist
+physical_name: vendors
+columns:
+- physical_name: vendor_id
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 3442f8959a84dea7ee197c632cb2df15
+  - d1b65fc7debc3361ea86b5f14c68d2e2
+  - ce3ad9de960102d0677a81f5d0bb7b2d
+  - c0f3eea2e14555b6faeea3dd58c1b1c3
+  - 51a04a8a6bdcb23deccc82b0b80742cf
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zip_code
+  physical_type: INT
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 61584
+  - 78314
+  - 69794
+  - 85375
+  - 69608
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: city
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - null
+  - null
+  - null
+  - null
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: state
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - CA
+  - CA
+  - NY
+  - CA
+  - CA
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: joined_at
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2018-11-24 16:12:29'
+  - '2018-10-31 09:00:00'
+  - '2020-03-14 12:20:10'
+  - '2020-03-05 00:26:04'
+  - '2019-08-04 12:04:09'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: tier
+  physical_type: TEXT
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - standard
+  - premium
+  - premium
+  - standard
+  - standard
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: comm_rate
+  physical_type: REAL
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 0.15
+  - 0.1
+  - 0.1
+  - 0.15
+  - 0.15
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

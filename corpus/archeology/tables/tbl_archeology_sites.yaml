@@ -1,0 +1,292 @@
+asset_type: table
+id: tbl_archeology_sites
+schema: public
+physical_name: sites
+columns:
+- physical_name: zoneregistry
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zonelabel
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Site-North Alexanderville
+  - Site-Grahammouth
+  - Site-Port Brianside
+  - Site-Kingport
+  - Site-South Tina
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: digunit
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Unit-C9
+  - Unit-A14
+  - Unit-D19
+  - Unit-B15
+  - Unit-C19
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: gridtrace
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - S29-E8
+  - N44-W27
+  - S48-W26
+  - N14-W23
+  - S32-E39
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: geox
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '-9.60214'
+  - '57.10752'
+  - '73.60554'
+  - '-74.17208'
+  - '49.94858'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: geoy
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '-2.75641'
+  - '70.03605'
+  - '141.71112'
+  - '-148.65162'
+  - '-88.61409'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: heightm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '4391.4'
+  - '429.3'
+  - '4934.6'
+  - '1316.1'
+  - '1125.0'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: depthc
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '329.9'
+  - '97.5'
+  - '499.9'
+  - '286.0'
+  - '9.3'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: phasefactor
+  physical_type: character varying(25)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Iron Age
+  - Medieval
+  - Iron Age
+  - Iron Age
+  - Iron Age
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: guessdate
+  physical_type: character varying(20)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - -2929 BCE
+  - 1335 BCE
+  - -4985 BCE
+  - -3387 BCE
+  - 164 CE
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: typesite
+  physical_type: character varying(25)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Burial
+  - Industrial
+  - Burial
+  - Military
+  - Industrial
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: presstat
+  physical_type: character varying(25)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Excellent
+  - Fair
+  - Critical
+  - Good
+  - Good
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: guardhint
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - null
+  - 'Temporary                                         '
+  - null
+  - null
+  - null
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: entrystat
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Closed
+  - Restricted
+  - Closed
+  - Restricted
+  - Open
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: saferank
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Minimal
+  - Standard
+  - High
+  - Minimal
+  - High
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: insurstat
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Expired
+  - Pending
+  - Expired
+  - Pending
+  - Pending
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: riskeval
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Required
+  - Pending
+  - Completed
+  - Required
+  - Pending
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: healtheval
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Approved
+  - Pending
+  - Review
+  - Pending
+  - Review
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: envhaz
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Low                                               '
+  - 'Low                                               '
+  - 'High                                              '
+  - 'Medium                                            '
+  - 'High                                              '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

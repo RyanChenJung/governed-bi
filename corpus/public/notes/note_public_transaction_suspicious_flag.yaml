@@ -1,0 +1,30 @@
+asset_type: note
+id: note_public_transaction_suspicious_flag
+kind: context
+scope: []
+summary: A transaction is flagged as suspicious (sketchy) when its Transaction Anomaly
+  Score TAS = (payment_amount / 1000) * (completion_hours / 24) * (1 + escrow_hours/100)
+  * (1 - market_escrow_completion_rate/100) exceeds 75, AND the payment method equals
+  'Crypto_B', AND escrow was either not used or lasted under 24 hours, AND routing_complexity
+  is marked 'Complex'; all four conditions must hold simultaneously.
+triggers: []
+activation: always
+normative_force: advisory
+confidence: 0.7
+related_notes: []
+publication_status: certified
+source_question: 'By "anomaly score" for transactions, which metric would you like
+  me to use to rank sketchiness — the fraud probability (riskanalysis.fraudprob),
+  the wallet risk score (riskanalysis.wallrisksc), or the security alert confidence
+  score (securitymonitoring.alertconfidencescore)? (why: The warehouse has no single
+  column literally named "anomaly score" — several risk-related metrics exist across
+  riskanalysis and securitymonitoring, and no governed note defines which one (or
+  combination) represents "sketchiness" for transactions.)'
+source_kind: live_chat
+audit:
+  provenance:
+    source: human
+    status: certified
+    source_refs: []
+    built_at: '2026-07-26T17:05:33.680517+00:00'
+    by: live_chat_user

@@ -1,7 +1,7 @@
 """Mountable ASGI app for the LangGraph Server custom routes (``langgraph.json``).
 
 The read + edit routes (capabilities, health, schema, ER graph, knowledge graph,
-corpus assets, skills, ``/corpus/edit``, and the non-streaming ``/chat``
+corpus assets, ``/corpus/edit``, and the non-streaming ``/chat``
 fallback) as one FastAPI app, so the LangGraph server serves them next to its own
 ``/threads`` and ``/runs`` and the frontend has a single base URL.
 
@@ -25,5 +25,10 @@ from governed_bi.api.stack import build_stack
 # This app is only ever mounted on the LangGraph server, which fronts the streaming
 # chat graph, so streaming IS available here - advertise it. build_stack defaults
 # can_stream False for the plain REST factory, which has no streaming endpoint.
-app = create_app(dataclasses.replace(build_stack(), can_stream=True))
+# (Round D3: ``create_app``'s ``/capabilities`` route now recomputes can_clarify
+# live off ``stack.can_stream`` and the runtime-toggles override on every call, so
+# there is no longer a frozen ``can_clarify`` value to bake in here — only
+# can_stream needs forcing to True.)
+_stack = build_stack()
+app = create_app(dataclasses.replace(_stack, can_stream=True))
 """The ASGI app the LangGraph server mounts (see module docstring)."""

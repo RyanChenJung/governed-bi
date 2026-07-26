@@ -403,6 +403,20 @@ def _layer_columns(
                 continue
             return _fail(layer, f"column not in the allowlist: {ref}")
 
+        # ORDER BY may reference this SAME scope's own SELECT-list output alias
+        # (e.g. ``SELECT ROUND(...) AS avg_x ... ORDER BY avg_x`` — standard,
+        # widely-supported SQL). That alias is a label on an expression whose own
+        # columns were already walked and validated by this same find_all(exp.Column)
+        # pass; allowing the ORDER BY reference to it grants no new column access.
+        # Deliberately scoped to ORDER BY only (not WHERE/HAVING, where an engine
+        # may instead resolve the bare name against a real, possibly-suspect base
+        # column of the same name — fail-closed there, per this layer's policy).
+        if column.find_ancestor(exp.Order) is not None and isinstance(select, exp.Select):
+            if name in {
+                e.alias for e in select.expressions if isinstance(e, exp.Alias) and e.alias
+            }:
+                continue
+
         # Bare column: only this scope's own sources can own it.
         _resolved, base, derived_outputs = cache[id(scope)]
         candidate_allowed = any(f"{p}.{name}" in allowed for p in base)

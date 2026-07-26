@@ -16,6 +16,7 @@ from governed_bi.corpus.schemas import (
     Column,
     FewShotAsset,
     LogicalType,
+    NoteAsset,
     TableAsset,
     TermAsset,
     TermBinding,
@@ -143,6 +144,7 @@ def test_empty_and_whitespace_question_return_empty_result(corpus):
         assert result.term_ids == []
         assert result.metric_ids == []
         assert result.few_shot_ids == []
+        assert result.note_ids == []
         assert result.scores == {}
 
 
@@ -276,6 +278,41 @@ def test_confidence_breaks_ties_toward_more_trusted_asset():
     res = retrieve(Corpus(assets=[low, high]), "vip")
     assert res.scores["term_low"] == res.scores["term_high"]  # a genuine tie
     assert res.term_ids[0] == "term_high"  # confidence, not id, wins the tie
+
+
+def test_note_indexes_summary_only_and_has_own_budget():
+    note = NoteAsset(
+        id="note_revenue",
+        kind="routing",
+        summary="Use the governed revenue metric.",
+        body="body-only-secret-token",
+    )
+    corpus = Corpus(assets=[note])
+    assert retrieve(corpus, "governed revenue").note_ids == ["note_revenue"]
+    assert retrieve(corpus, "body-only-secret-token").note_ids == []
+    assert retrieve(corpus, "governed revenue", note_k=0).note_ids == []
+
+
+def test_schema_documents_exclude_note_text():
+    """R1 guard: notes must never dilute the schema-routing document."""
+    from governed_bi.retrieval.schema_router import schema_documents
+
+    table = TableAsset(
+        id="tbl_s_orders",
+        schema="s",
+        physical_name="orders",
+        description="order facts",
+    )
+    note = NoteAsset(
+        id="note_secret",
+        kind="routing",
+        summary="UNIQUE_NOTE_ROUTING_TOKEN_xyz",
+        scope=["schema:s"],
+    )
+    docs = schema_documents(Corpus(assets=[table, note]))
+    assert "s" in docs
+    assert "UNIQUE_NOTE_ROUTING_TOKEN_xyz" not in docs["s"]
+    assert "order facts" in docs["s"]
 
 
 def test_vector_weight_scales_semantic_channel():

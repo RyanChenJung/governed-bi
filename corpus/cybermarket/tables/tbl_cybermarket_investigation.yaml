@@ -1,0 +1,307 @@
+asset_type: table
+id: tbl_cybermarket_investigation
+schema: public
+physical_name: investigation
+columns:
+- physical_name: investregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - INVEST_T7MI5
+  - INVEST_UPT1O
+  - INVEST_CIP8J
+  - INVEST_V7AEX
+  - INVEST_40DLW
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: investstat
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Closed
+  - Monitoring
+  - Closed
+  - Closed
+  - Active
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: lawinterest
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - High
+  - Medium
+  - Low
+  - Medium
+  - Medium
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: regrisklvl
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Medium
+  - High
+  - High
+  - Low
+  - Low
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: compliancescore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.30'
+  - '55.46'
+  - '39.38'
+  - '57.29'
+  - '66.28'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: investpriority
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Low
+  - High
+  - Low
+  - Medium
+  - High
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: resptimemins
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 583
+  - 1097
+  - 1209
+  - 849
+  - 153
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: escalationlevel
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Level1
+  - Level2
+  - Level2
+  - Level1
+  - Level3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: casestatus
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - In Progress
+  - In Progress
+  - In Progress
+  - Resolved
+  - Resolved
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: resolutiontimehours
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 143
+  - 609
+  - 112
+  - 815
+  - 818
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: actiontaken
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Restriction
+  - Warning
+  - Termination
+  - Termination
+  - Termination
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: followuprequired
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'Yes'
+  - 'No'
+  - 'Yes'
+  - 'Yes'
+  - 'No'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: reviewfrequency
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Monthly
+  - Weekly
+  - Daily
+  - Daily
+  - Daily
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: nextreviewdate
+  physical_type: date
+  logical_type: date
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2021-12-08'
+  - '2024-06-05'
+  - '2021-10-10'
+  - '2021-09-15'
+  - '2020-10-18'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: notescount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 33
+  - 20
+  - 38
+  - 21
+  - 2
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: dataretentionstatus
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Active
+  - Archived
+  - Archived
+  - Active
+  - Archived
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: lastupdated
+  physical_type: timestamp without time zone
+  logical_type: datetime
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2025-12-12T06:51:55'
+  - '2024-01-09T09:46:47'
+  - '2021-07-15T08:24:25'
+  - '2021-05-01T07:41:57'
+  - '2024-01-26T05:15:23'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: updatefrequencyhours
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 710
+  - 195
+  - 186
+  - 64
+  - 103
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: secref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - SECMON_EBN59
+  - SECMON_GYFA8
+  - SECMON_6NVR1
+  - SECMON_0WXD8
+  - SECMON_FWJ8I
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: riskref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - RISK_MXF5J
+  - RISK_JUZR9
+  - RISK_MLVPK
+  - RISK_J3SD3
+  - RISK_1P8AQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

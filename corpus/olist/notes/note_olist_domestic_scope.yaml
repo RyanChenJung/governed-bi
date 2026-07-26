@@ -1,0 +1,14 @@
+asset_type: note
+id: note_olist_domestic_scope
+kind: business_rule
+scope: [tbl_olist_accounts]
+summary: >
+  "Domestic" means accounts.country IN ('US', 'CA') (United States and
+  Canada); "international" means country NOT IN ('US', 'CA') (currently MX
+  and UK). Do not treat domestic as US-only.
+activation: always
+confidence: 0.9
+publication_status: draft
+audit:
+  evidence: "accounts.country sample values include US, CA, MX, UK; olist semantic_layer.md section 1 (Geographic & Scope Definitions)"
+  provenance: { source: curator, status: draft }
