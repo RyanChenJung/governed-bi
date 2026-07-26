@@ -1,0 +1,157 @@
+asset_type: table
+id: tbl_archeology_scanmesh
+schema: public
+physical_name: scanmesh
+columns:
+- physical_name: facetregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'SN20065                                           '
+  - 'SN29799                                           '
+  - 'SN83019                                           '
+  - 'SN60801                                           '
+  - 'SN64520                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: facetverts
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 7234721
+  - 2361491
+  - 542100
+  - 5250157
+  - 6976598
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: facetfaces
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5997318
+  - 7708278
+  - 1973487
+  - 8715696
+  - 2296820
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: facetresmm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '3.20'
+  - '9.79'
+  - '2.33'
+  - '3.76'
+  - '0.66'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: texdist
+  physical_type: character varying(5)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 2K
+  - 2K
+  - 1K
+  - 4K
+  - 2K
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: texpix
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 2048
+  - 8192
+  - 4096
+  - 4096
+  - 8192
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: uvmapqual
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Medium
+  - High
+  - Low
+  - Medium
+  - High
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: geomdeltamm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2.740'
+  - '3.790'
+  - '0.480'
+  - '4.270'
+  - '4.890'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

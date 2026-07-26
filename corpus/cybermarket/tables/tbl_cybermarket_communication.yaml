@@ -1,0 +1,277 @@
+asset_type: table
+id: tbl_cybermarket_communication
+schema: public
+physical_name: communication
+columns:
+- physical_name: commregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - COMM_BGDA3
+  - COMM_MJ90F
+  - COMM_6HX3V
+  - COMM_SPK9B
+  - COMM_II6MU
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: iptally
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 9
+  - 9
+  - 3
+  - 2
+  - 3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: tornodecount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 25
+  - 75
+  - 97
+  - 67
+  - 14
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vpnflag
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'No'
+  - 'No'
+  - Suspected
+  - Suspected
+  - 'Yes'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: brwsrunique
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '6.400'
+  - '61.500'
+  - '79.000'
+  - '70.600'
+  - '13.900'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: devfpscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '5.613'
+  - '1.454'
+  - '6.659'
+  - '6.522'
+  - '5.400'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: connpatscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '80.65'
+  - '29.25'
+  - '2.53'
+  - '51.29'
+  - '51.45'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: encryptmethod
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Standard
+  - Custom
+  - Standard
+  - Enhanced
+  - Standard
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: commchannel
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - External
+  - Mixed
+  - External
+  - External
+  - Mixed
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: msgtally
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 36
+  - 10
+  - 5
+  - 37
+  - 39
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: commfreq
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Medium
+  - Low
+  - Medium
+  - Medium
+  - Medium
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: langpattern
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Variable
+  - Consistent
+  - Consistent
+  - Suspicious
+  - Variable
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: sentiscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '0.850'
+  - '0.279'
+  - '0.053'
+  - '0.936'
+  - '0.891'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: keymatchcount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 58
+  - 65
+  - 90
+  - 62
+  - 31
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: susppatscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '1.82'
+  - '10.18'
+  - '12.42'
+  - '60.69'
+  - '87.53'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: riskindiccount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 29
+  - 49
+  - 40
+  - 34
+  - 4
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - TX_4F06D
+  - TX_69L3A
+  - TX_F8DOW
+  - TX_LUZYM
+  - TX_48L5V
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - PROD_0C7HD
+  - PROD_LH5LN
+  - PROD_ARXK5
+  - PROD_E7BCI
+  - PROD_559F3
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

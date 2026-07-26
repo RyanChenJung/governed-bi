@@ -1,0 +1,30 @@
+asset_type: note
+id: note_public_environmental_suitability_index
+kind: context
+scope: []
+summary: Environmental Suitability Index (ESI) is a derived score per scan environment
+  reading, computed from ambient temperature, humidity percentage, and illuminance
+  in scanenvironment, where higher values indicate better scanning conditions; result
+  is rounded to 2 decimal places unless otherwise specified.
+triggers: []
+activation: always
+normative_force: advisory
+confidence: 0.7
+related_notes: []
+publication_status: certified
+source_question: 'There''s no predefined "scanning suitability" metric in the data.
+  Could you clarify what you''d like this to represent? For example: (a) environmental
+  conditions score (based on ambient temp/humidity/illumination in scanenvironment),
+  (b) scan quality score (based on point cloud coverage %, noise, and resolution in
+  scanpointcloud), or (c) some other combination? (why: The term "scanning suitability"
+  is not a defined metric anywhere in the governed context (tables, notes, or curated
+  examples), and multiple plausible metrics exist across scanenvironment and scanpointcloud
+  tables.)'
+source_kind: live_chat
+audit:
+  provenance:
+    source: human
+    status: certified
+    source_refs: []
+    built_at: '2026-07-26T17:12:23.402769+00:00'
+    by: live_chat_user

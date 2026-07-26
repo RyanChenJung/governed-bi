@@ -1,0 +1,157 @@
+asset_type: table
+id: tbl_archeology_scanregistration
+schema: public
+physical_name: scanregistration
+columns:
+- physical_name: logregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: logaccumm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '0.840'
+  - '3.440'
+  - '3.950'
+  - '0.170'
+  - '4.180'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: refmark
+  physical_type: character varying(6)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '40'
+  - '21'
+  - '25'
+  - '31'
+  - '7'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: ctrlpts
+  physical_type: character varying(6)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '73'
+  - '6'
+  - '84'
+  - '99'
+  - '43'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: logmethod
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Hybrid
+  - Target-based
+  - Hybrid
+  - Hybrid
+  - Target-based
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: transform
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Matrix-47
+  - Matrix-712
+  - Matrix-113
+  - Matrix-543
+  - Matrix-92
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: errscale
+  physical_type: character varying(20)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Cloud-to-Mesh
+  - Cloud-to-Mesh
+  - Cloud-to-Cloud
+  - RMSE
+  - Cloud-to-Mesh
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: errvalmm
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '6.962'
+  - '4.442'
+  - '6.069'
+  - '2.963'
+  - '5.727'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

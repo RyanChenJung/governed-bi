@@ -1,0 +1,67 @@
+asset_type: table
+id: tbl_archeology_personnel
+schema: public
+physical_name: personnel
+columns:
+- physical_name: crewregistry
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewlabel
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Joel Wallace
+  - Latoya Abbott
+  - Aaron Knight
+  - James Watson
+  - Jose Watson
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: leadregistry
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'SV7658                                            '
+  - 'SV2189                                            '
+  - 'SV6920                                            '
+  - 'SV4288                                            '
+  - 'SV2106                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: leadlabel
+  physical_type: character varying(40)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Michael Kaiser
+  - Stephanie Marquez
+  - Victoria George
+  - Sean Cline
+  - Jo Smith
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

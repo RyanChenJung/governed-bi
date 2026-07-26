@@ -1,0 +1,82 @@
+asset_type: table
+id: tbl_archeology_projects
+schema: public
+physical_name: projects
+columns:
+- physical_name: arcregistry
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vesseltag
+  physical_type: character varying(60)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Project Happy
+  - Project Off
+  - Project Central
+  - Project Perhaps
+  - Project Majority
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fundflux
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Government
+  - Government
+  - University
+  - Government
+  - Private
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: authpin
+  physical_type: character(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'PMT4719                                           '
+  - 'PMT4944                                           '
+  - 'PMT5400                                           '
+  - 'PMT9731                                           '
+  - 'PMT2568                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: authhalt
+  physical_type: date
+  logical_type: date
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2025-12-05'
+  - '2025-09-20'
+  - '2025-03-18'
+  - '2025-11-03'
+  - '2025-08-24'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

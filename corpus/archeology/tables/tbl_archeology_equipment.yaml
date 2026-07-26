@@ -1,0 +1,97 @@
+asset_type: table
+id: tbl_archeology_equipment
+schema: public
+physical_name: equipment
+columns:
+- physical_name: equipregistry
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 'SN20065                                           '
+  - 'SN29799                                           '
+  - 'SN83019                                           '
+  - 'SN60801                                           '
+  - 'SN64520                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipform
+  physical_type: character varying(28)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - LiDAR
+  - Structured Light
+  - Photogrammetry
+  - Structured Light
+  - Photogrammetry
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipdesign
+  physical_type: character varying(14)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Model-669
+  - Model-835
+  - Model-566
+  - Model-674
+  - Model-135
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equiptune
+  physical_type: date
+  logical_type: date
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2024-11-01'
+  - '2024-09-09'
+  - '2025-02-08'
+  - '2024-10-19'
+  - '2024-12-10'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipstatus
+  physical_type: character varying(16)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Excellent
+  - Good
+  - Good
+  - Good
+  - Poor
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: powerlevel
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 62
+  - 21
+  - 46
+  - 29
+  - 13
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

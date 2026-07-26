@@ -1,0 +1,247 @@
+asset_type: table
+id: tbl_cybermarket_markets
+schema: public
+physical_name: markets
+columns:
+- physical_name: mktregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - MKT_SOB5D
+  - MKT_3VNMP
+  - MKT_3Y1WX
+  - MKT_QC5NK
+  - MKT_46CZQ
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktdenom
+  physical_type: character varying(80)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Market_84
+  - Market_35
+  - Market_91
+  - Market_43
+  - Market_6
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktclass
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Forum
+  - Service
+  - Forum
+  - Forum
+  - Marketplace
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mktspan
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 168
+  - 745
+  - 579
+  - 113
+  - 564
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: sizecluster
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Large
+  - Small
+  - Medium
+  - Medium
+  - Small
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: dlyflow
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5388
+  - 5691
+  - 3093
+  - 8790
+  - 7236
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: mthactive
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 38982
+  - 38209
+  - 43189
+  - 30261
+  - 88999
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendcount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 232
+  - 59
+  - 185
+  - 76
+  - 798
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buycount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 73577
+  - 75138
+  - 60697
+  - 41494
+  - 93731
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: listtotal
+  physical_type: bigint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 34839
+  - 34217
+  - 38732
+  - 3694
+  - 40441
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: interscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '76.300'
+  - '27.300'
+  - '4.300'
+  - '78.000'
+  - '17.900'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: esccomprate
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '12.800'
+  - '97.600'
+  - '89.400'
+  - '53.600'
+  - '9.600'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: market_status_reputation
+  physical_type: jsonb
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - status: Under Investigation
+    trust_level: High
+    reputation_score: 91.1
+    compliance_metrics:
+      penalty_count: 1
+      warning_count: 6
+      rule_break_count: 10
+      restriction_level: Partial
+    community_trust_score: 35.8
+    dispute_resolution_score: 3.4
+  - status: Under Investigation
+    trust_level: Low
+    reputation_score: 75.7
+    compliance_metrics:
+      penalty_count: 0
+      warning_count: 4
+      rule_break_count: 4
+      restriction_level: Full
+    community_trust_score: 64.0
+    dispute_resolution_score: 3.2
+  - status: Suspended
+    trust_level: Medium
+    reputation_score: 84.4
+    compliance_metrics:
+      penalty_count: 1
+      warning_count: 7
+      rule_break_count: 7
+      restriction_level: Partial
+    community_trust_score: 95.2
+    dispute_resolution_score: 33.2
+  - status: Active
+    trust_level: High
+    reputation_score: 36.5
+    compliance_metrics:
+      penalty_count: 3
+      warning_count: 1
+      rule_break_count: 16
+      restriction_level: Full
+    community_trust_score: 38.4
+    dispute_resolution_score: 33.6
+  - status: Under Investigation
+    trust_level: High
+    reputation_score: 65.2
+    compliance_metrics:
+      penalty_count: 1
+      warning_count: 6
+      rule_break_count: 12
+      restriction_level: Full
+    community_trust_score: 66.1
+    dispute_resolution_score: 44.9
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

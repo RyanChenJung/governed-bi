@@ -1,0 +1,172 @@
+asset_type: table
+id: tbl_archeology_scanfeatures
+schema: public
+physical_name: scanfeatures
+columns:
+- physical_name: traitregistry
+  physical_type: bigint
+  logical_type: integer
+  nullable: false
+  is_unique: true
+  sample_values:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: equipref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'SN20065                                           '
+  - 'SN29799                                           '
+  - 'SN83019                                           '
+  - 'SN60801                                           '
+  - 'SN64520                                           '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: traitextract
+  physical_type: character varying(25)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Manual
+  - Semi-automatic
+  - Manual
+  - Automatic
+  - Automatic
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: traitcount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 516
+  - 899
+  - 103
+  - 820
+  - 160
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: articount
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 71
+  - 22
+  - 69
+  - 8
+  - 31
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: structkind
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Artifact
+  - Complex
+  - Complex
+  - Wall
+  - Floor
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: matkind
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Organic
+  - Metal
+  - Ceramic
+  - Mixed
+  - Ceramic
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: huestudy
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Partial
+  - Partial
+  - Completed
+  - Not Required
+  - Not Required
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: texturestudy
+  physical_type: character varying(15)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Partial
+  - Not Required
+  - Partial
+  - Completed
+  - Partial
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: patternnote
+  physical_type: text
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Not Required
+  - Partial
+  - Not Required
+  - Completed
+  - Partial
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

@@ -1,0 +1,127 @@
+asset_type: table
+id: tbl_cybermarket_products
+schema: public
+physical_name: products
+columns:
+- physical_name: prodregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - PROD_0C7HD
+  - PROD_LH5LN
+  - PROD_ARXK5
+  - PROD_E7BCI
+  - PROD_TQGCG
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodtheme
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Digital
+  - Data
+  - Digital
+  - Service
+  - Physical
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodsubcat
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Type_B
+  - Type_C
+  - Type_B
+  - Type_D
+  - Type_A
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodlistdays
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 155
+  - 105
+  - 116
+  - 30
+  - 73
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodpriceusd
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '6478.18'
+  - '7111.06'
+  - '6119.25'
+  - '9513.86'
+  - '6637.89'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: prodqty
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 92
+  - 48
+  - 59
+  - 4
+  - 25
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: vendref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - VEND_0DY9A
+  - VEND_2JDYC
+  - VEND_JAI03
+  - VEND_HPORG
+  - VEND_Y4G4K
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: buyref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - BUY_4CF99
+  - BUY_SAR2O
+  - BUY_9KX6B
+  - BUY_I28N8
+  - BUY_869KG
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

@@ -1,0 +1,287 @@
+asset_type: table
+id: tbl_cybermarket_riskanalysis
+schema: public
+physical_name: riskanalysis
+columns:
+- physical_name: riskregistry
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - RISK_UUZ5A
+  - RISK_M8885
+  - RISK_KAE6H
+  - RISK_728YK
+  - RISK_OELBS
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fraudprob
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '0.433'
+  - '0.981'
+  - '0.530'
+  - '0.616'
+  - '0.277'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: moneyrisk
+  physical_type: USER-DEFINED
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Low
+  - Medium
+  - Low
+  - High
+  - High
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: linkedtxcount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 29
+  - 8
+  - 47
+  - 9
+  - 20
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txchainlen
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 4
+  - 9
+  - 10
+  - 6
+  - 7
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: wallrisksc
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '34.40'
+  - '29.80'
+  - '47.40'
+  - '38.10'
+  - '30.90'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: wallage
+  physical_type: integer
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 722
+  - 307
+  - 879
+  - 452
+  - 864
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: wallbalusd
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '98937.33'
+  - '16240.76'
+  - '26348.08'
+  - '82897.33'
+  - '90009.32'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: wallturnrt
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '42.320'
+  - '4.290'
+  - '19.450'
+  - '36.260'
+  - '4.030'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txvel
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '58.40'
+  - '97.70'
+  - '88.40'
+  - '90.30'
+  - '81.50'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: profilecomplete
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '8.9'
+  - '0.8'
+  - '9.2'
+  - '7.7'
+  - '6.7'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: idverifyscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '3.8'
+  - '7.5'
+  - '6.6'
+  - '0.6'
+  - '5.5'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: feedbackauthscore
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '6.6'
+  - '1.3'
+  - '2.2'
+  - '0.5'
+  - '5.6'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: commref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - COMM_BGDA3
+  - COMM_MJ90F
+  - COMM_6HX3V
+  - COMM_SPK9B
+  - COMM_II6MU
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: txref
+  physical_type: character varying(30)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - TX_4F06D
+  - TX_69L3A
+  - TX_F8DOW
+  - TX_LUZYM
+  - TX_48L5V
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: network_behavior_analytics
+  physical_type: jsonb
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - network_analysis:
+      centrality_score: 13.082
+      cluster_coefficient: null
+      connection_diversity: 97.77
+    behavioral_analysis:
+      geo_distribution_score: 81.9
+      temporal_pattern_score: 70.39
+      behavior_consistency_score: 67.64
+    transaction_pattern_category: Suspicious
+  - network_analysis:
+      centrality_score: 84.588
+      cluster_coefficient: null
+      connection_diversity: 80.62
+    behavioral_analysis:
+      geo_distribution_score: 7.1
+      temporal_pattern_score: 61.89
+      behavior_consistency_score: 85.54
+    transaction_pattern_category: Normal
+  - network_analysis:
+      centrality_score: 34.528
+      cluster_coefficient: null
+      connection_diversity: 83.97
+    behavioral_analysis:
+      geo_distribution_score: 74.0
+      temporal_pattern_score: 59.13
+      behavior_consistency_score: 52.45
+    transaction_pattern_category: High-risk
+  - network_analysis:
+      centrality_score: 98.839
+      cluster_coefficient: null
+      connection_diversity: 13.83
+    behavioral_analysis:
+      geo_distribution_score: 54.6
+      temporal_pattern_score: 28.57
+      behavior_consistency_score: 64.16
+    transaction_pattern_category: High-risk
+  - network_analysis:
+      centrality_score: 58.448
+      cluster_coefficient: null
+      connection_diversity: 71.34
+    behavioral_analysis:
+      geo_distribution_score: 68.3
+      temporal_pattern_score: 80.59
+      behavior_consistency_score: 73.75
+    transaction_pattern_category: Normal
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false

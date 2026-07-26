@@ -1,0 +1,187 @@
+asset_type: table
+id: tbl_archeology_scans
+schema: public
+physical_name: scans
+columns:
+- physical_name: questregistry
+  physical_type: character varying(16)
+  logical_type: string
+  nullable: false
+  is_unique: true
+  sample_values:
+  - ASD409481
+  - ASD648638
+  - ASD535327
+  - ASD213501
+  - ASD387860
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: chronotag
+  physical_type: timestamp without time zone
+  logical_type: datetime
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '2024-09-03T07:20:28.479288'
+  - '2024-07-27T08:52:12.479479'
+  - '2025-01-24T12:45:10.479479'
+  - '2024-04-23T18:04:33.479479'
+  - '2024-12-31T01:19:03.480489'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: arcref
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - PR7509
+  - PR8078
+  - PR9973
+  - PR8865
+  - PR8235
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: crewref
+  physical_type: character(50)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - 'OP4641                                            '
+  - 'OP8435                                            '
+  - 'OP7199                                            '
+  - 'OP5563                                            '
+  - 'OP4778                                            '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: zoneref
+  physical_type: character varying(12)
+  logical_type: string
+  nullable: false
+  is_unique: false
+  sample_values:
+  - SC9016
+  - SC9081
+  - SC4817
+  - SC4082
+  - SC3155
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: scancount
+  physical_type: smallint
+  logical_type: integer
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 5
+  - 2
+  - 7
+  - 10
+  - 20
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: climtune
+  physical_type: character varying(22)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - Windy
+  - Rainy
+  - Windy
+  - Cloudy
+  - Cloudy
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: huecatch
+  physical_type: character varying(50)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - RGB
+  - RGB
+  - RGB
+  - null
+  - RGB
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: fmtfile
+  physical_type: character(4)
+  logical_type: string
+  nullable: true
+  is_unique: false
+  sample_values:
+  - 'PTS '
+  - 'PLY '
+  - 'PLY '
+  - 'OBJ '
+  - 'PLY '
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: gbsize
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '24.71'
+  - '21.63'
+  - '41.48'
+  - '6.50'
+  - '18.47'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: pressratio
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '3.22'
+  - '6.86'
+  - '4.20'
+  - '3.20'
+  - '2.64'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+- physical_name: spanmin
+  physical_type: numeric
+  logical_type: decimal
+  nullable: true
+  is_unique: false
+  sample_values:
+  - '63.00'
+  - '240.00'
+  - '37.00'
+  - '188.00'
+  - '168.00'
+  reliability:
+    status: ok
+  governance:
+    excluded: false
+governance:
+  excluded: false
