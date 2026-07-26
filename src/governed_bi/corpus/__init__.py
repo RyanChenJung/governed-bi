@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from .clarify import accept_answer
 from .ids import is_valid_id
-from .loader import Corpus, load_corpus
+from .loader import Corpus, list_schema_dirs, load_corpus
 from .serialize import dump_asset, subdir_for_type, write_corpus
 from .schemas import (
     Asset,
@@ -49,6 +49,7 @@ __all__ = [
     "TermAsset",
     "is_green",
     "is_valid_id",
+    "list_schema_dirs",
     "load_corpus",
     "parse_asset",
     "subdir_for_type",

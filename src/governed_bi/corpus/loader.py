@@ -99,14 +99,33 @@ class Corpus:
         return Corpus(assets=visible)
 
 
+def list_schema_dirs(root: Path) -> list[str]:
+    """Names of every schema subdirectory ``load_corpus(root)`` (no explicit
+    ``schema``) would load.
+
+    This is the on-disk directory name under ``root`` — the identifier
+    ``load_corpus(root, schema=...)`` expects — which is a distinct concept
+    from a ``TableAsset``'s ``schema`` field (the *physical* Postgres schema a
+    table's SQL is qualified with, e.g. ``inspect_schema``'s
+    ``f"{asset.schema}.{asset.physical_name}"``). The two usually coincide,
+    but not for a corpus root that holds several BIRD-Interact-Lite-style
+    flat-per-DB Postgres databases side by side, each in its own directory
+    (e.g. ``archeology/``) while every table inside is labeled with the same
+    physical schema (``public``). Callers that need "every schema this corpus
+    root covers" — e.g. ``analyst.tools._fold_answered_clarifications`` —
+    must enumerate directories, not ``TableAsset.schema`` values, or they
+    resolve to a schema name with no tables on disk.
+    """
+    root = Path(root)
+    return sorted(p.name for p in root.iterdir() if p.is_dir() and p.name != "_generated")
+
+
 def load_corpus(root: Path, schema: str | None = None) -> Corpus:
     """Load the corpus under ``root`` (a ``corpus/`` dir). If ``schema`` is given,
     load only ``root/<schema>``; otherwise load every schema subdirectory."""
     root = Path(root)
     schema_dirs = (
-        [root / schema]
-        if schema
-        else [p for p in root.iterdir() if p.is_dir() and p.name != "_generated"]
+        [root / schema] if schema else [root / name for name in list_schema_dirs(root)]
     )
 
     corpus = Corpus()

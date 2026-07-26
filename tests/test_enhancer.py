@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from governed_bi.corpus.schemas import Column, LogicalType, NoteAsset, TableAsset
 from governed_bi.curator.asset_bag import AssetBag, CaveatFoldCounts
 from governed_bi.curator.clarifications import ClarificationRecord, ClarificationRecordStatus
@@ -416,3 +418,127 @@ def test_refolding_the_same_clarification_does_not_double_reinforce():
     assert bag.metrics[existing_id].audit.provenance.reinforced_by == [
         "clar_reinforce_idempotent"
     ]
+
+
+# --------------------------------------------------------------------------- #
+# BIRD-Interact-Lite persistence pilot bug: a corpus directory name that
+# differs from its tables' physical (Postgres) schema label used to make
+# every formula-shaped live-chat answer fold as a paraphrased NoteAsset
+# instead of an exact-formula MetricAsset. See ``analyst.tools
+# ._fold_answered_clarifications`` and ``corpus.loader.list_schema_dirs``.
+# --------------------------------------------------------------------------- #
+
+pytest.importorskip("langchain_core")
+
+
+def _archeology_scanenvironment_table() -> "TableAsset":
+    # Mirrors corpus/archeology/tables/tbl_archeology_scanenvironment.yaml:
+    # the on-disk corpus directory is "archeology" (one BIRD-Interact-Lite
+    # database among several sharing this corpus root), but every table's
+    # physical Postgres schema is relabeled "public" to match
+    # BIRD-Interact-Lite's flat per-DB Postgres layout.
+    return TableAsset(
+        id="tbl_archeology_scanenvironment",
+        schema="public",
+        physical_name="scanenvironment",
+        columns=[
+            Column(
+                physical_name="ambictemp",
+                physical_type="numeric",
+                logical_type=LogicalType.decimal,
+                nullable=True,
+                is_unique=False,
+            )
+        ],
+    )
+
+
+def test_live_chat_fold_resolves_metric_when_table_schema_differs_from_corpus_dir(
+    tmp_path,
+):
+    """Reproduces the pilot bug (commit dbb6f54's diagnosis, Round 3's
+    1c4bd35): a live-chat-answered, formula-shaped clarification against the
+    real ``archeology`` corpus (table ``scanenvironment``, physical schema
+    relabeled ``public``) used to fold as a NoteAsset — losing the exact
+    formula — because the fold's ``known_tables`` list came back empty
+    (``unknown base_table='scanenvironment'; known=[]``).
+
+    Before the fix, ``_fold_answered_clarifications`` derived "which schemas
+    to poll" from ``TableAsset.schema`` (``"public"``) instead of the actual
+    corpus directory name (``"archeology"``), so it polled
+    ``corpus_root/public`` — a directory with no ``tables/`` — and the
+    Enhancer's MetricAsset write failed and silently fell back to a note.
+    """
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from governed_bi.analyst.tools import _record_live_clarification_answer
+    from governed_bi.corpus import load_corpus
+    from governed_bi.corpus.schemas import MetricAsset
+    from governed_bi.corpus.serialize import write_corpus
+    from governed_bi.curator.clarifications import (
+        clarifications_path,
+        write_clarifications,
+    )
+
+    corpus_root = tmp_path / "corpus"
+    table = _archeology_scanenvironment_table()
+    write_corpus(corpus_root, "archeology", [table])
+
+    question = (
+        "There's no predefined \"scanning suitability\" metric in the data. "
+        "Could you clarify what you'd like this to represent?"
+    )
+    answer = (
+        "Environmental Suitability Index = 100 - 2.5*|AmbicTemp-20| - "
+        "1.5*|HumePct-50| from scanenvironment"
+    )
+    rec = ClarificationRecord(
+        id="live_q1",
+        scope="live_chat:live_q1",
+        question=question,
+        status=ClarificationRecordStatus.open,
+        source="live_chat",
+    )
+    write_clarifications(clarifications_path(corpus_root), [rec])
+
+    decision_json = json.dumps(
+        {
+            "concept_name": "environmental_suitability_index",
+            "asset_type": "metric",
+            "generalized_definition": (
+                "Environmental Suitability Index is 100 minus a penalty for "
+                "deviation from ideal ambient temperature and humidity in "
+                "scanenvironment."
+            ),
+            "base_table": "scanenvironment",
+            "expression": (
+                "100 - 2.5*|AmbicTemp-20| - 1.5*|HumePct-50|"
+            ),
+            "duplicate_of": None,
+            "conflict_with": None,
+        }
+    )
+
+    corpus = load_corpus(corpus_root)  # every schema dir under corpus_root, as-served
+    _record_live_clarification_answer(
+        corpus_root,
+        clarification_id="live_q1",
+        declined=False,
+        deferred=False,
+        answer=answer,
+        corpus=corpus,
+        enhancer_chat_model=FakeListChatModel(responses=[decision_json]),
+        certify=True,
+    )
+
+    folded = load_corpus(corpus_root, schema="archeology")
+    metrics = [a for a in folded.assets if isinstance(a, MetricAsset)]
+    notes = [a for a in folded.assets if isinstance(a, NoteAsset)]
+
+    assert not notes, (
+        "regression: the formula-shaped answer fell back to a paraphrased "
+        f"NoteAsset instead of a MetricAsset: {notes!r}"
+    )
+    [metric] = metrics
+    assert metric.base_table == table.id  # tbl_archeology_scanenvironment
+    assert metric.expression == "100 - 2.5*|AmbicTemp-20| - 1.5*|HumePct-50|"

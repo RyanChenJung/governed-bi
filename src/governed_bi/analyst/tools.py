@@ -170,11 +170,33 @@ def _fold_answered_clarifications(
     side-channel call consume/advance any per-call state it carries (a
     scripted test double's response queue today; conceivably a real
     reasoning-trace or rate-limit wrapper's state tomorrow).
+
+    **The bug this fixes** (diagnosed against a real Postgres corpus — see
+    ``curator.enhancer``'s module docstring for the sibling Round-A bug): this
+    used to derive the schemas to poll from ``{a.schema for a in
+    corpus.assets if isinstance(a, TableAsset)}`` — a ``TableAsset.schema`` is
+    the *physical* Postgres schema its SQL is qualified with (see
+    ``inspect_schema``), not the on-disk corpus directory name
+    ``apply_answered_clarifications_to_corpus``/``load_corpus`` expect as
+    ``schema``. The two happen to coincide for a corpus root with one dataset
+    per physical schema, but not for a corpus root holding several
+    BIRD-Interact-Lite-style flat-per-DB Postgres databases side by side (each
+    its own directory, e.g. ``archeology/``) where every table is labeled
+    with the same physical schema (``public``). There, this polled
+    ``apply_answered_clarifications_to_corpus(corpus_root, "public", ...)``,
+    which loaded ``corpus_root/public`` — a directory with no ``tables/`` —
+    so the fold's ``AssetBag`` had zero known tables and every formula-shaped
+    answer's ``MetricAsset`` write failed (``unknown base_table=...;
+    known=[]``) and silently fell back to a prose ``NoteAsset``, losing the
+    exact formula. Using :func:`~governed_bi.corpus.list_schema_dirs` instead
+    polls the same directories ``load_corpus(corpus_root)`` (no explicit
+    schema) would have loaded ``corpus`` from in the first place.
     """
     if corpus is None:
         return
     import logging
 
+    from ..corpus.loader import list_schema_dirs
     from ..curator.pipeline import apply_answered_clarifications_to_corpus
 
     logger = logging.getLogger("governed_bi.analyst")
@@ -183,7 +205,7 @@ def _fold_answered_clarifications(
         from ..llm.langchain_client import LangChainChatClient
 
         chat = LangChainChatClient(enhancer_chat_model)
-    schemas = {a.schema for a in corpus.assets if isinstance(a, TableAsset)}
+    schemas = list_schema_dirs(corpus_root)
     for schema in schemas:
         try:
             apply_answered_clarifications_to_corpus(
