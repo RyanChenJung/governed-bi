@@ -44,6 +44,7 @@ from .schemas import (
     DraftApproveResponse,
     EditRequest,
     EditResponse,
+    ElicitationGenerateResponse,
     HealthResponse,
     KnowledgeGraphResponse,
     RelatedJoinResponse,
@@ -628,6 +629,62 @@ def create_app(stack: ServeStack | None = None):
             records = [r for r in records if r.status.value == status]
         return [ClarificationResponse.model_validate(r) for r in records]
 
+    @app.get(
+        "/elicitation/candidates",
+        response_model=list[ClarificationResponse],
+        tags=["clarifications"],
+    )
+    def elicitation_candidates() -> list[ClarificationResponse]:
+        """Phase 1 elicitation wizard candidates (open AND answered — the
+        wizard needs both to render its progress), i.e. every ledger record
+        with ``source="elicitation_wizard"``. Distinct from ``/clarifications``
+        (which defaults to every source, open by default) so the wizard's
+        fixed A > C+E > B > D grouping doesn't have to filter the curator's
+        general SME queue client-side."""
+        from ..curator.clarifications import clarifications_path, load_clarifications
+
+        records = load_clarifications(clarifications_path(stack.corpus_root))
+        wizard_records = [r for r in records if r.source == "elicitation_wizard"]
+        return [ClarificationResponse.model_validate(r) for r in wizard_records]
+
+    @app.post(
+        "/elicitation/generate",
+        response_model=ElicitationGenerateResponse,
+        tags=["clarifications"],
+    )
+    def elicitation_generate() -> ElicitationGenerateResponse:
+        """Scan the served schema and propose a conservative set of
+        category-tagged candidate questions (gated on ``capabilities.can_edit``
+        like every other ledger-writing route). Idempotent: a scope already
+        covered by an earlier run is not re-proposed."""
+        from ..corpus.schemas import TableAsset
+        from ..curator.clarifications import (
+            clarifications_path,
+            load_clarifications,
+            write_clarifications,
+        )
+        from ..curator.elicitation import generate_candidate_questions
+
+        if not stack.can_edit:
+            raise HTTPException(status_code=403, detail="corpus editing is not enabled")
+
+        path = clarifications_path(stack.corpus_root)
+        existing = load_clarifications(path)
+        tables = [a for a in stack.corpus_full.assets if isinstance(a, TableAsset)]
+
+        chat = None
+        if stack.chat_model is not None:
+            from ..llm.langchain_client import LangChainChatClient
+
+            chat = LangChainChatClient(stack.chat_model)
+
+        created = generate_candidate_questions(tables, existing=existing, chat=chat)
+        if created:
+            write_clarifications(path, [*existing, *created])
+        return ElicitationGenerateResponse(
+            created=[ClarificationResponse.model_validate(r) for r in created]
+        )
+
     @app.post(
         "/clarifications/{clarification_id}/answer",
         response_model=ClarificationResponse,
@@ -637,31 +694,63 @@ def create_app(stack: ServeStack | None = None):
         clarification_id: str, req: ClarificationAnswerRequest
     ) -> ClarificationResponse:
         """Record an admin's answer to one open clarification (dev, gated on
-        ``capabilities.can_edit`` like ``/corpus/edit``). 404 on an unknown id."""
+        ``capabilities.can_edit`` like ``/corpus/edit``). 404 on an unknown id.
+
+        Shared by the curator's general SME queue AND the Phase 1 elicitation
+        wizard — a category-tagged record (``rec.category`` set) has its final
+        ``answer`` text composed from the category's shape (picked column,
+        numeric value, exclusion checkbox, or checked value subset — see
+        ``curator.elicitation.compose_elicitation_answer_text``) before the
+        same fold below runs; an A-category answer additionally checks whether
+        it should auto-generate a D-category join-path follow-up.
+        """
         from ..curator.clarifications import (
             ClarificationRecordStatus,
             clarifications_path,
             load_clarifications,
+            next_clarification_id,
             write_clarifications,
+        )
+        from ..curator.elicitation import (
+            compose_elicitation_answer_text,
+            maybe_generate_join_followup,
         )
 
         if not stack.can_edit:
             raise HTTPException(status_code=403, detail="corpus editing is not enabled")
-        if req.choice_id is None and req.answer is None:
-            raise HTTPException(status_code=422, detail="one of choice_id or answer is required")
+        if req.choice_id is None and req.choice_ids is None and req.answer is None:
+            raise HTTPException(
+                status_code=422, detail="one of choice_id, choice_ids, or answer is required"
+            )
 
         path = clarifications_path(stack.corpus_root)
         records = load_clarifications(path)
         for i, rec in enumerate(records):
             if rec.id == clarification_id:
+                final_answer = req.answer
+                if rec.category is not None:
+                    final_answer = compose_elicitation_answer_text(
+                        rec,
+                        choice_id=req.choice_id,
+                        choice_ids=req.choice_ids,
+                        freeform=req.answer,
+                    )
                 records[i] = rec.model_copy(
                     update={
                         "status": ClarificationRecordStatus.answered,
-                        "answer": req.answer,
+                        "answer": final_answer,
                         "answer_choice_id": req.choice_id,
+                        "answer_choice_ids": req.choice_ids,
                         "answered_by": req.answered_by,
                     }
                 )
+                if rec.category == "A" and req.choice_id:
+                    followup = maybe_generate_join_followup(rec, req.choice_id)
+                    if followup is not None:
+                        followup = followup.model_copy(
+                            update={"id": next_clarification_id(records)}
+                        )
+                        records.append(followup)
                 write_clarifications(path, records)
                 # Fold immediately rather than leaving this as a separate poll
                 # step (apply_answered_clarifications_to_corpus was previously

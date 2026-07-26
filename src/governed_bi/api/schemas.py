@@ -398,18 +398,38 @@ class ClarificationResponse(_View):
     allow_freeform: bool
     answer: str | None
     answer_choice_id: str | None
+    answer_choice_ids: list[str] | None = None
     answered_by: str | None
-    source: str  # "curator" | "live_chat"
+    source: str  # "curator" | "live_chat" | "elicitation_wizard"
+    # Phase 1 elicitation wizard fields (None for curator/live_chat records).
+    category: str | None = None  # "A" | "B" | "C" | "D" | "E"
+    ui_modality: str | None = None  # "column_picker" | "numeric" | "checkbox" | "checklist"
+    target_table: str | None = None
+    target_column: str | None = None
 
 
 class ClarificationAnswerRequest(BaseModel):
-    """Body for ``POST /clarifications/{id}/answer``. Either field may be set;
-    at least one is required (enforced in the route, not here, so the 422 vs
-    400 distinction stays in one place)."""
+    """Body for ``POST /clarifications/{id}/answer``. Either ``choice_id``,
+    ``choice_ids`` (elicitation wizard category B's multi-select checklist), or
+    ``answer`` may be set; at least one is required (enforced in the route, not
+    here, so the 422 vs 400 distinction stays in one place)."""
 
     choice_id: str | None = None
+    choice_ids: list[str] | None = None
     answer: str | None = None
     answered_by: str = "admin"
+
+
+# ── Phase 1 elicitation wizard (proactive admin onboarding, before any live
+# business-user question) ─────────────────────────────────────────────────── #
+class ElicitationGenerateResponse(BaseModel):
+    """Response for ``POST /elicitation/generate``: the newly proposed
+    candidate questions (already appended to the ledger as open,
+    ``source="elicitation_wizard"`` records). Idempotent — a scope already
+    covered by an earlier wizard run is not re-proposed, so calling this again
+    with nothing new to ask returns an empty list."""
+
+    created: list[ClarificationResponse]
 
 
 # ── live allow_user_clarification override (gated on capabilities.can_edit) ── #

@@ -19,6 +19,18 @@ class ClarificationRecordStatus(str, Enum):
     answered = "answered"
 
 
+# Phase 1 elicitation wizard categories (utku-ai-phase2-spec.md "Phase 1
+# elicitation examples, by category"), fixed priority order A > C > E > B > D.
+# ``D`` (join paths) is never generated as a standalone candidate — see
+# ``curator.elicitation.maybe_generate_join_followup`` — but still tags the
+# auto-generated follow-up record so the UI/ledger can distinguish it.
+ElicitationCategory = Literal["A", "B", "C", "D", "E"]
+
+# UI widget the wizard renders for a category-tagged candidate question.
+# ``None`` (e.g. a D follow-up) falls back to the existing choice+freeform form.
+ElicitationUiModality = Literal["column_picker", "numeric", "checkbox", "checklist"]
+
+
 class ClarificationRecord(BaseModel):
     """One row in ``clarifications.jsonl``."""
 
@@ -33,13 +45,32 @@ class ClarificationRecord(BaseModel):
     allow_freeform: bool = True
     answer: str | None = None
     answer_choice_id: str | None = None
+    # Multi-select audit trail (category B's "checklist of real DB values" —
+    # a single ``answer_choice_id`` can't represent picking several). Not
+    # consumed by ``resolve_answer_text`` directly; the composed sentence is
+    # written into ``answer`` at answer time (see
+    # ``curator.elicitation.compose_elicitation_answer_text``).
+    answer_choice_ids: list[str] | None = None
     answered_by: str | None = None
     converted_to_corpus: bool = False
     # Where the record originated: the curator pipeline (offline SME hand-off,
-    # the pre-existing default) or a live serve-time ``ask_user`` call logged
-    # for later admin follow-up. Defaults to "curator" so every pre-existing
-    # record/test round-trips unchanged.
-    source: Literal["curator", "live_chat"] = "curator"
+    # the pre-existing default), a live serve-time ``ask_user`` call logged
+    # for later admin follow-up, or the proactive Phase 1 elicitation wizard
+    # (admin onboarding, before any business user ever asks a live question).
+    # Defaults to "curator" so every pre-existing record/test round-trips
+    # unchanged.
+    source: Literal["curator", "live_chat", "elicitation_wizard"] = "curator"
+
+    # ── Phase 1 elicitation wizard fields (None for every pre-existing/
+    # non-wizard record) ──
+    category: ElicitationCategory | None = None
+    ui_modality: ElicitationUiModality | None = None
+    # Best-guess table this question concerns (A: the "expected" table used by
+    # the D join-path heuristic; C/E/B: the table the rule/exclusion/value-map
+    # concerns). ``target_column`` is set for B/E (a specific column); left
+    # unset for A/C, which concern a term or a schema-wide constant.
+    target_table: str | None = None
+    target_column: str | None = None
 
 
 CLARIFICATIONS_FILENAME = "clarifications.jsonl"
@@ -232,7 +263,16 @@ def resolve_answer_text(rec: ClarificationRecord) -> str | None:
     context" shape — is appended for context). With no choice picked, the
     freeform ``answer`` is used as-is. Returns ``None``/empty when the record
     carries neither.
+
+    A category-tagged record (Phase 1 elicitation wizard) is the one
+    exception: its ``answer`` is already a fully composed, self-contained
+    sentence (see ``curator.elicitation.compose_elicitation_answer_text``,
+    written at answer time) — a bare picked-choice label like
+    ``"sales.total_amount"`` would lose the term/rule context that made the
+    label meaningful, so the label+freeform concatenation below is skipped.
     """
+    if rec.category is not None:
+        return rec.answer
     label: str | None = None
     if rec.answer_choice_id and rec.choices:
         for choice in rec.choices:
