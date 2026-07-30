@@ -8,9 +8,18 @@ summary: >
   txns, 2020-10-17); "churned customer" means no order in the last 180 days
   from that same end date. Use the dataset's max purchased_at, not the
   current wall-clock date, as the reference point.
+
+  Boundary computation (disambiguated 2026-07-29, Experiment 006 Finding 3):
+  compare as a CONTINUOUS elapsed-time difference, not calendar-date
+  truncation. Use julianday(end_date) - julianday(purchased_at) <= 90 (or
+  the equivalent exact-timestamp arithmetic in your SQL dialect) rather than
+  DATE(end_date, '-90 days') <= purchased_at <= DATE(end_date), which
+  truncates purchased_at's time-of-day component and can shift which orders
+  fall inside/outside the window at the boundary. Confirmed to produce a
+  different customer count than the continuous-day method on this dataset.
 activation: always
 confidence: 0.9
 publication_status: draft
 audit:
-  evidence: "olist semantic_layer.md section 2 (Active & Churned Customers); dataset end date = MAX(purchased_at) = 2020-10-17"
+  evidence: "olist semantic_layer.md section 2 (Active & Churned Customers); dataset end date = MAX(purchased_at) = 2020-10-17. Boundary method disambiguated per Experiment 006 (~/Antigravity/experiments/006_eval-set-expansion/SUMMARY.md, Finding 3) after all 3 differently-worded K1 questions independently converged on the calendar-truncation reading and scored wrong against the continuous-day gold answer."
   provenance: { source: curator, status: draft }
