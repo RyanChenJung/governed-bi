@@ -89,6 +89,10 @@ def main() -> None:
     parser.add_argument("--prompt-styles", type=str, default="direct,cot_execution_order,decomposed")
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--label", type=str, default="round2")
+    parser.add_argument("--dataset", dest="dataset", choices=["v1", "v2"], default="v1",
+                         help="Experiment 007: 'v1' (default, unchanged) is OLIST_EVAL. "
+                              "'v2' is OLIST_EVAL_V2 (Experiment 006's 148-question pool). "
+                              "Combine with --ids to scope to a specific group.")
     args = parser.parse_args()
 
     temperatures = tuple(float(t) for t in args.temperatures.split(","))
@@ -114,7 +118,7 @@ def main() -> None:
         _fail(f"LangChain deps failed to import ({err}). Run: uv sync --extra agents --extra bedrock")
 
     from governed_bi.corpus import load_corpus
-    from governed_bi.eval import OLIST_EVAL
+    from governed_bi.eval import OLIST_EVAL, OLIST_EVAL_V2
     from governed_bi.eval.candidates import generate_pools, pool_hits
     from governed_bi.gateway import Gateway, Identity, SqliteConnector
 
@@ -146,7 +150,7 @@ def main() -> None:
     def make_connector():
         return SqliteConnector(sqlite_path, schema=schema)
 
-    items = OLIST_EVAL
+    items = OLIST_EVAL_V2 if args.dataset == "v2" else OLIST_EVAL
     if args.ids is not None:
         wanted = {s.strip() for s in args.ids.split(",") if s.strip()}
         items = [item for item in items if item.question_id in wanted]
