@@ -702,13 +702,13 @@ OLIST_EVAL_NEW: list[EvalItem] = [
         difficulty='K',
     ),
     EvalItem(
-        question='What share of order line items went out at full price, with no promotion attached?',
+        question='What percentage of order line items went out at full price, with no promotion attached?',
         sql="SELECT COUNT(CASE WHEN disc_code IS NULL THEN 1 END)*100.0/COUNT(*) FROM line_items",
         question_id='K2-b',
         difficulty='K',
     ),
     EvalItem(
-        question='Of everything we\'ve ever sold, what fraction had zero discount code on the line item?',
+        question='As a percentage, of everything we\'ve ever sold, how much had zero discount code on the line item?',
         sql="SELECT COUNT(CASE WHEN disc_code IS NULL THEN 1 END)*100.0/COUNT(*) FROM line_items",
         question_id='K2-c',
         difficulty='K',
@@ -830,3 +830,103 @@ OLIST_EVAL_NEW: list[EvalItem] = [
 ]
 
 OLIST_EVAL_V2: list[EvalItem] = [*OLIST_EVAL, *OLIST_EVAL_NEW]
+
+
+# --- Experiment 006 follow-up: Group M expansion (2026-07-29) ---
+# 15 more false-alarm controls (M-09..M-23), bringing M to 23 total, per the
+# 'needs a bigger N before citing as settled' flag in SUMMARY.md Finding 1.
+OLIST_EVAL_M_EXPANSION: list[EvalItem] = [
+    EvalItem(
+        question='How many accounts are located in Mexico (MX)?',
+        sql="SELECT COUNT(*) FROM accounts WHERE country = 'MX'",
+        question_id='M-09',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many reviews have a rating of exactly 0?',
+        sql="SELECT COUNT(*) FROM reviews WHERE rating = 0",
+        question_id='M-10',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders were placed on exactly 2019-10-01?',
+        sql="SELECT COUNT(*) FROM txns WHERE DATE(purchased_at) = '2019-10-01'",
+        question_id='M-11',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many distinct acct_id values are there in the accounts table?',
+        sql="SELECT COUNT(DISTINCT acct_id) FROM accounts",
+        question_id='M-12',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many vendors have a tier of \'premium\'?',
+        sql="SELECT COUNT(*) FROM vendors WHERE tier = 'premium'",
+        question_id='M-13',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many line items have a disc_code of \'STAFF50\'?',
+        sql="SELECT COUNT(*) FROM line_items WHERE disc_code = 'STAFF50'",
+        question_id='M-14',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders have an rma_flag of exactly 1?',
+        sql="SELECT COUNT(*) FROM txns WHERE rma_flag = 1",
+        question_id='M-15',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many line items have a unit_price greater than 500?',
+        sql="SELECT COUNT(*) FROM line_items WHERE unit_price > 500",
+        question_id='M-16',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders have a channel of \'app\'?',
+        sql="SELECT COUNT(*) FROM txns WHERE channel = 'app'",
+        question_id='M-17',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many accounts have is_verified equal to 1?',
+        sql="SELECT COUNT(*) FROM accounts WHERE is_verified = 1",
+        question_id='M-18',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many catalog items have a weight greater than 10?',
+        sql="SELECT COUNT(*) FROM catalog WHERE weight > 10",
+        question_id='M-19',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many line items have a freight of exactly 0?',
+        sql="SELECT COUNT(*) FROM line_items WHERE freight = 0",
+        question_id='M-20',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders have an fc_region of \'NORTH\'?',
+        sql="SELECT COUNT(*) FROM txns WHERE fc_region = 'NORTH'",
+        question_id='M-21',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many reviews have a rating of exactly 4?',
+        sql="SELECT COUNT(*) FROM reviews WHERE rating = 4",
+        question_id='M-22',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many vendors are located in the state of New York (NY)?',
+        sql="SELECT COUNT(*) FROM vendors WHERE state = 'NY'",
+        question_id='M-23',
+        difficulty='M',
+    ),
+]
+
+OLIST_EVAL_NEW = [*OLIST_EVAL_NEW, *OLIST_EVAL_M_EXPANSION]
+OLIST_EVAL_V2 = [*OLIST_EVAL, *OLIST_EVAL_NEW]

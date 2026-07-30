@@ -1,0 +1,31 @@
+asset_type: note
+id: note_olist_vendor_good_standing
+kind: business_rule
+scope: [tbl_olist_vendors, tbl_olist_line_items, tbl_olist_txns, tbl_olist_reviews]
+summary: >
+  A vendor is "in good standing" / "meets our quality and reliability bar"
+  when BOTH: (1) average customer rating >= 3.5, excluding rating = 0
+  ("not yet rated") rows, AND (2) return rate < 10%, where return rate =
+  (orders with rma_flag = 3) / (orders with status = 'delivered').
+
+  Required computation order (a vendor's "orders" are txns that contain at
+  least one line_item from that vendor — an order can touch multiple
+  vendors, so DEDUP is required before either aggregate):
+    1. vendor_orders = SELECT DISTINCT vendor_id, txn_id FROM line_items
+    2. avg_rating: join vendor_orders to reviews on txn_id, AVG(rating)
+       WHERE rating > 0, GROUP BY vendor_id
+    3. return_rate: join vendor_orders to txns on txn_id, compute
+       COUNT(rma_flag=3) / COUNT(status='delivered'), GROUP BY vendor_id
+
+  Skipping step 1's DISTINCT and joining line_items to reviews/txns
+  directly double-counts a vendor's rating/return once per line item in a
+  multi-item order, inflating or deflating the aggregate. Confirmed as a
+  real, reproducible mistake (Experiment 006 Finding, L2): a good-standing
+  question joined line_items straight to reviews without the vendor_orders
+  dedup step and scored wrong as a result.
+activation: always
+confidence: 0.9
+publication_status: draft
+audit:
+  evidence: "olist semantic_layer.md section 10 (Vendor Good Standing)"
+  provenance: { source: curator, status: draft }
