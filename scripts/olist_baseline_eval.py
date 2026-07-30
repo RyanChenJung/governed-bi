@@ -75,6 +75,13 @@ def main() -> None:
                               "scripts/olist_build_mistake_memory.py) into the corpus before "
                               "retrieval, so a similar past mistake + its fix can surface "
                               "on-match. Default 'off' (live-serve-equivalent corpus).")
+    parser.add_argument("--dataset", dest="dataset", choices=["v1", "v2"], default="v1",
+                         help="Experiment 006: 'v1' (default, unchanged) is the original "
+                              "100-question OLIST_EVAL every prior round (0-8) cites. 'v2' "
+                              "is OLIST_EVAL_V2 (v1 + the 33-question expansion — SQL-"
+                              "complexity headroom [J], native Type A/B rule-transfer pairs "
+                              "[K/L], false-alarm controls [M]). Combine with --ids to run "
+                              "just the new questions without re-running all of v1.")
     parser.add_argument("--memory-mode", dest="memory_mode",
                          choices=["question_text", "sql_features"], default="question_text",
                          help="Round-8 Tk-Boost refinement: how --memory on notes are "
@@ -113,7 +120,7 @@ def main() -> None:
 
     from governed_bi.config import Environment, Settings
     from governed_bi.corpus import load_corpus
-    from governed_bi.eval import OLIST_EVAL, execution_match
+    from governed_bi.eval import OLIST_EVAL, OLIST_EVAL_V2, execution_match
     from governed_bi.eval.arms import agent_solver
     from governed_bi.gateway import Gateway, Identity, SqliteConnector
 
@@ -178,7 +185,7 @@ def main() -> None:
     connector = SqliteConnector(sqlite_path, schema=schema)
     gateway = Gateway(connector)
 
-    items = OLIST_EVAL
+    items = OLIST_EVAL_V2 if args.dataset == "v2" else OLIST_EVAL
     if args.ids is not None:
         wanted = {s.strip() for s in args.ids.split(",") if s.strip()}
         items = [item for item in items if item.question_id in wanted]

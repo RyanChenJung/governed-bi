@@ -620,3 +620,213 @@ OLIST_EVAL: list[EvalItem] = [
         difficulty='I',
     ),
 ]
+
+
+# --- Experiment 006: eval-set expansion (2026-07-29) ---
+# New question groups, appended without touching OLIST_EVAL (v1) above, so
+# every prior experiment (001-005) that cites OLIST_EVAL numbers stays exactly
+# reproducible. See ~/Antigravity/experiments/006_eval-set-expansion/SUMMARY.md
+# for the design rationale (SQL-complexity headroom [J], native Type A/B
+# rule-transfer pairs [K/L], false-alarm controls [M]).
+OLIST_EVAL_NEW: list[EvalItem] = [
+    EvalItem(
+        question='Within each vendor tier, rank vendors by total product revenue and list the top 2 vendors per tier.',
+        sql="WITH vendor_rev AS ( SELECT v.vendor_id, v.tier, SUM(li.unit_price) AS rev FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id GROUP BY v.vendor_id, v.tier ), ranked AS ( SELECT tier, vendor_id, rev, RANK() OVER (PARTITION BY tier ORDER BY rev DESC) AS rnk FROM vendor_rev ) SELECT tier, vendor_id, ROUND(rev,2) FROM ranked WHERE rnk <= 2 ORDER BY tier, rnk",
+        question_id='J-01',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='If product categories are ordered from highest to lowest total product revenue, how many categories are needed to reach 80% of total product revenue?',
+        sql="WITH cat_rev AS ( SELECT cl.category_name, SUM(li.unit_price) AS rev FROM line_items li JOIN catalog c ON li.item_id = c.item_id JOIN cat_labels cl ON c.category_code = cl.category_code GROUP BY cl.category_name ), ranked AS ( SELECT category_name, rev, SUM(rev) OVER (ORDER BY rev DESC) AS cum, SUM(rev) OVER () AS total, ROW_NUMBER() OVER (ORDER BY rev DESC) AS rn FROM cat_rev ) SELECT MIN(rn) FROM ranked WHERE cum >= 0.8 * total",
+        question_id='J-02',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='What is the median order value (total amount paid per order) among delivered orders?',
+        sql="WITH order_totals AS ( SELECT t.txn_id, SUM(p.amount) AS total_amt FROM txns t JOIN payments p ON t.txn_id = p.txn_id WHERE t.status = 'delivered' GROUP BY t.txn_id ), ranked AS ( SELECT total_amt, ROW_NUMBER() OVER (ORDER BY total_amt) AS rn, COUNT(*) OVER () AS cnt FROM order_totals ) SELECT AVG(total_amt) FROM ranked WHERE rn IN ((cnt+1)/2, (cnt+2)/2)",
+        question_id='J-03',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='Among calendar months with at least 100 orders, which month had the largest month-over-month increase in total revenue versus the prior month?',
+        sql="WITH monthly AS ( SELECT strftime('%Y-%m', t.purchased_at) AS ym, SUM(p.amount) AS rev, COUNT(DISTINCT t.txn_id) AS cnt FROM txns t JOIN payments p ON t.txn_id = p.txn_id GROUP BY ym HAVING cnt >= 100 ), diffs AS ( SELECT ym, rev - LAG(rev) OVER (ORDER BY ym) AS delta FROM monthly ) SELECT ym FROM diffs ORDER BY delta DESC LIMIT 1",
+        question_id='J-04',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='What are the top 3 vendors by total platform commission earned, considering only vendors that are in good standing?',
+        sql="WITH vendor_orders AS ( SELECT DISTINCT li.vendor_id, li.txn_id FROM line_items li ), vendor_ratings AS ( SELECT vo.vendor_id, AVG(r.rating) AS avg_rating FROM vendor_orders vo JOIN reviews r ON vo.txn_id = r.txn_id WHERE r.rating > 0 GROUP BY vo.vendor_id ), vendor_returns AS ( SELECT vo.vendor_id, SUM(CASE WHEN t.rma_flag = 3 THEN 1 ELSE 0 END) * 1.0 / NULLIF(SUM(CASE WHEN t.status = 'delivered' THEN 1 ELSE 0 END), 0) AS return_rate FROM vendor_orders vo JOIN txns t ON vo.txn_id = t.txn_id GROUP BY vo.vendor_id ), good_standing AS ( SELECT vr.vendor_id FROM vendor_ratings vr JOIN vendor_returns vret ON vr.vendor_id = vret.vendor_id WHERE vr.avg_rating >= 3.5 AND vret.return_rate < 0.10 ) SELECT li.vendor_id, ROUND(SUM(li.unit_price * v.comm_rate), 2) AS comm FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id WHERE li.vendor_id IN (SELECT vendor_id FROM good_standing) GROUP BY li.vendor_id ORDER BY comm DESC LIMIT 3",
+        question_id='J-05',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='Customers are ranked by their all-time total spend (product price plus freight) and split into 10 equal-sized groups (deciles). What percentage of all-time GMV comes from the top decile?',
+        sql="WITH customer_spend AS ( SELECT a.acct_uid, SUM(li.unit_price + li.freight) AS spend FROM accounts a JOIN txns t ON a.acct_id = t.acct_id JOIN line_items li ON t.txn_id = li.txn_id GROUP BY a.acct_uid ), ranked AS ( SELECT acct_uid, spend, NTILE(10) OVER (ORDER BY spend DESC) AS decile FROM customer_spend ) SELECT SUM(CASE WHEN decile = 1 THEN spend ELSE 0 END) * 100.0 / SUM(spend) FROM ranked",
+        question_id='J-06',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='Considering only seller states with at least 20 domestically-shipped and 20 internationally-shipped orders, which seller state shows the largest gap between its domestic average review score and its international average review score?',
+        sql="WITH order_seller_state AS ( SELECT DISTINCT li.txn_id, v.state AS seller_state FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id ), order_scope AS ( SELECT oss.seller_state, CASE WHEN a.country IN ('US','CA') THEN 'domestic' ELSE 'international' END AS scope, r.rating FROM order_seller_state oss JOIN txns t ON oss.txn_id = t.txn_id JOIN accounts a ON t.acct_id = a.acct_id JOIN reviews r ON t.txn_id = r.txn_id WHERE r.rating > 0 ), agg AS ( SELECT seller_state, scope, AVG(rating) AS avg_r, COUNT(*) AS cnt FROM order_scope GROUP BY seller_state, scope ) SELECT dom.seller_state FROM (SELECT * FROM agg WHERE scope='domestic' AND cnt>=20) dom JOIN (SELECT * FROM agg WHERE scope='international' AND cnt>=20) intl ON dom.seller_state = intl.seller_state ORDER BY ABS(dom.avg_r - intl.avg_r) DESC LIMIT 1",
+        question_id='J-07',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='Among vendors with at least 5 successfully delivered orders, what is the average gap in days between a vendor\'s consecutive deliveries?',
+        sql="WITH vendor_deliveries AS ( SELECT DISTINCT li.vendor_id, t.txn_id, t.delivered_at FROM line_items li JOIN txns t ON li.txn_id = t.txn_id WHERE t.status = 'delivered' AND t.delivered_at IS NOT NULL ), ranked AS ( SELECT vendor_id, delivered_at, julianday(delivered_at) - julianday( LAG(delivered_at) OVER (PARTITION BY vendor_id ORDER BY delivered_at) ) AS gap_days FROM vendor_deliveries ), vendor_counts AS ( SELECT vendor_id, COUNT(*) AS cnt FROM vendor_deliveries GROUP BY vendor_id HAVING cnt >= 5 ) SELECT AVG(gap_days) FROM ranked WHERE vendor_id IN (SELECT vendor_id FROM vendor_counts) AND gap_days IS NOT NULL",
+        question_id='J-08',
+        difficulty='J',
+    ),
+    EvalItem(
+        question='How many active customers do we have right now?',
+        sql="SELECT COUNT(DISTINCT a.acct_uid) FROM accounts a JOIN txns t ON a.acct_id = t.acct_id WHERE julianday('2020-10-17') - julianday(t.purchased_at) <= 90",
+        question_id='K1-a',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='How many customers have ordered recently, within our standard activity window?',
+        sql="SELECT COUNT(DISTINCT a.acct_uid) FROM accounts a JOIN txns t ON a.acct_id = t.acct_id WHERE julianday('2020-10-17') - julianday(t.purchased_at) <= 90",
+        question_id='K1-b',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='Per our retention policy, how many customers currently count as active?',
+        sql="SELECT COUNT(DISTINCT a.acct_uid) FROM accounts a JOIN txns t ON a.acct_id = t.acct_id WHERE julianday('2020-10-17') - julianday(t.purchased_at) <= 90",
+        question_id='K1-c',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='What percentage of items were sold without any discount code applied?',
+        sql="SELECT COUNT(CASE WHEN disc_code IS NULL THEN 1 END)*100.0/COUNT(*) FROM line_items",
+        question_id='K2-a',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='What share of order line items went out at full price, with no promotion attached?',
+        sql="SELECT COUNT(CASE WHEN disc_code IS NULL THEN 1 END)*100.0/COUNT(*) FROM line_items",
+        question_id='K2-b',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='Of everything we\'ve ever sold, what fraction had zero discount code on the line item?',
+        sql="SELECT COUNT(CASE WHEN disc_code IS NULL THEN 1 END)*100.0/COUNT(*) FROM line_items",
+        question_id='K2-c',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='What is our total platform commission across all sales?',
+        sql="SELECT SUM(li.unit_price * v.comm_rate) FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id",
+        question_id='K3-a',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='How much do we collect in commission fees from vendors, in total?',
+        sql="SELECT SUM(li.unit_price * v.comm_rate) FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id",
+        question_id='K3-b',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='Summing across every line item, what is our total take from vendor commission rates?',
+        sql="SELECT SUM(li.unit_price * v.comm_rate) FROM line_items li JOIN vendors v ON li.vendor_id = v.vendor_id",
+        question_id='K3-c',
+        difficulty='K',
+    ),
+    EvalItem(
+        question='What is our net revenue after subtracting all refunds?',
+        sql="SELECT (SELECT SUM(amount) FROM payments) - (SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN txns t ON p.txn_id=t.txn_id WHERE t.rma_flag=3)",
+        question_id='L1-a',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='What percentage of our total revenue is at risk from fully refunded orders?',
+        sql="SELECT (SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN txns t ON p.txn_id=t.txn_id WHERE t.rma_flag=3) * 100.0 / (SELECT SUM(amount) FROM payments)",
+        question_id='L1-b',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='Which vendor tier has the highest proportion of vendors currently meeting our quality and reliability bar for continued partnership?',
+        sql="WITH vendor_orders AS (SELECT DISTINCT li.vendor_id, li.txn_id FROM line_items li), vendor_ratings AS ( SELECT vo.vendor_id, AVG(r.rating) AS avg_rating FROM vendor_orders vo JOIN reviews r ON vo.txn_id = r.txn_id WHERE r.rating > 0 GROUP BY vo.vendor_id ), vendor_returns AS ( SELECT vo.vendor_id, SUM(CASE WHEN t.rma_flag=3 THEN 1 ELSE 0 END)*1.0 / NULLIF(SUM(CASE WHEN t.status='delivered' THEN 1 ELSE 0 END),0) AS return_rate FROM vendor_orders vo JOIN txns t ON vo.txn_id = t.txn_id GROUP BY vo.vendor_id ), good_standing AS ( SELECT vr.vendor_id FROM vendor_ratings vr JOIN vendor_returns vret ON vr.vendor_id = vret.vendor_id WHERE vr.avg_rating >= 3.5 AND vret.return_rate < 0.10 ), tier_totals AS ( SELECT tier, COUNT(*) AS total FROM vendors GROUP BY tier ), tier_good AS ( SELECT v.tier, COUNT(*) AS good FROM vendors v WHERE v.vendor_id IN (SELECT vendor_id FROM good_standing) GROUP BY v.tier ) SELECT tt.tier FROM tier_totals tt JOIN tier_good tg ON tt.tier = tg.tier ORDER BY tg.good * 1.0 / tt.total DESC LIMIT 1",
+        question_id='L2-a',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='If we audited vendor performance today, how many vendors would pass on both customer satisfaction and low return rate?',
+        sql="WITH vendor_orders AS (SELECT DISTINCT li.vendor_id, li.txn_id FROM line_items li), vendor_ratings AS ( SELECT vo.vendor_id, AVG(r.rating) AS avg_rating FROM vendor_orders vo JOIN reviews r ON vo.txn_id = r.txn_id WHERE r.rating > 0 GROUP BY vo.vendor_id ), vendor_returns AS ( SELECT vo.vendor_id, SUM(CASE WHEN t.rma_flag=3 THEN 1 ELSE 0 END)*1.0 / NULLIF(SUM(CASE WHEN t.status='delivered' THEN 1 ELSE 0 END),0) AS return_rate FROM vendor_orders vo JOIN txns t ON vo.txn_id = t.txn_id GROUP BY vo.vendor_id ) SELECT COUNT(*) FROM vendor_ratings vr JOIN vendor_returns vret ON vr.vendor_id = vret.vendor_id WHERE vr.avg_rating >= 3.5 AND vret.return_rate < 0.10",
+        question_id='L2-b',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='Excluding one-time shoppers, how many distinct people keep coming back to buy again?',
+        sql="SELECT COUNT(*) FROM ( SELECT a.acct_uid FROM accounts a JOIN txns t ON a.acct_id=t.acct_id GROUP BY a.acct_uid HAVING COUNT(DISTINCT t.txn_id) > 1 )",
+        question_id='L3-a',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='Two orders from the same real person but different order records should count as one customer, not two. Using that logic, how many total unique buyers have we ever had?',
+        sql="SELECT COUNT(DISTINCT acct_uid) FROM accounts",
+        question_id='L3-b',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='What is our average satisfaction score, properly excluding anyone who hasn\'t left a real rating yet?',
+        sql="SELECT AVG(rating) FROM reviews WHERE rating > 0",
+        question_id='L4-a',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='For reviews that actually reflect a customer\'s opinion, rather than an unrated placeholder, what is the average score?',
+        sql="SELECT AVG(rating) FROM reviews WHERE rating > 0",
+        question_id='L4-b',
+        difficulty='L',
+    ),
+    EvalItem(
+        question='How many accounts are located in the state of Texas (TX)?',
+        sql="SELECT COUNT(*) FROM accounts WHERE state = 'TX'",
+        question_id='M-01',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many payments used the \'voucher\' method?',
+        sql="SELECT COUNT(*) FROM payments WHERE method = 'voucher'",
+        question_id='M-02',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many reviews have a rating of exactly 3?',
+        sql="SELECT COUNT(*) FROM reviews WHERE rating = 3",
+        question_id='M-03',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many vendors have a comm_rate of exactly 0.10?',
+        sql="SELECT COUNT(*) FROM vendors WHERE comm_rate = 0.10",
+        question_id='M-04',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many line items have a disc_code of \'WELCOME10\'?',
+        sql="SELECT COUNT(*) FROM line_items WHERE disc_code = 'WELCOME10'",
+        question_id='M-05',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders have a status of \'invoiced\'?',
+        sql="SELECT COUNT(*) FROM txns WHERE status = 'invoiced'",
+        question_id='M-06',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many orders were placed by accounts with acq_src equal to \'organic\'?',
+        sql="SELECT COUNT(*) FROM txns t JOIN accounts a ON t.acct_id=a.acct_id WHERE a.acq_src = 'organic'",
+        question_id='M-07',
+        difficulty='M',
+    ),
+    EvalItem(
+        question='How many distinct fulfillment center region values are used in the txns table?',
+        sql="SELECT COUNT(DISTINCT fc_region) FROM txns",
+        question_id='M-08',
+        difficulty='M',
+    ),
+]
+
+OLIST_EVAL_V2: list[EvalItem] = [*OLIST_EVAL, *OLIST_EVAL_NEW]
