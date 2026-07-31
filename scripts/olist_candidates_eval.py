@@ -120,6 +120,7 @@ def main() -> None:
     from governed_bi.corpus import load_corpus
     from governed_bi.eval import OLIST_EVAL, OLIST_EVAL_V2
     from governed_bi.eval.candidates import generate_pools, pool_hits
+    from governed_bi.eval.repro import corpus_git_state
     from governed_bi.gateway import Gateway, Identity, SqliteConnector
 
     sqlite_path = Path(settings.datasource.sqlite_path)
@@ -243,6 +244,10 @@ def main() -> None:
         "temperatures": list(temperatures),
         "elapsed_s_total": round(elapsed_total, 1),
         "workers": args.workers,
+        # See governed_bi.eval.repro: pins exactly which corpus commit this
+        # run's numbers reflect (corpus/ is a shared live tree, not
+        # versioned per experiment — Experiment 007 Round 6 finding).
+        "corpus_git_state": corpus_git_state(REPO_ROOT),
     }
     print("\n== summary ==")
     print(json.dumps(summary, indent=2))

@@ -41,6 +41,7 @@ from .dataset import BEER_FACTORY_EVAL, BEER_FACTORY_UNANSWERABLE, EvalItem
 from .ex import execution_match, normalized_result
 from .olist_dataset import OLIST_EVAL, OLIST_EVAL_NEW, OLIST_EVAL_V2
 from .refuse_gate import RefuseGateResult, agent_refuser, eval_refuse_gate
+from .repro import corpus_git_state
 from .select import MajorityVoteResult, majority_vote
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "OLIST_EVAL",
     "OLIST_EVAL_NEW",
     "OLIST_EVAL_V2",
+    "corpus_git_state",
     "PROMPT_STYLES",
     "RefuseGateResult",
     "Solver",

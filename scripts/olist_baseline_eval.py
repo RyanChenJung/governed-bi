@@ -253,6 +253,8 @@ def main() -> None:
         for r in rows if not r["correct"]
     ]
 
+    from governed_bi.eval.repro import corpus_git_state
+
     summary = {
         "label": args.label,
         "n": n,
@@ -267,6 +269,10 @@ def main() -> None:
             "enable_mistake_memory": enable_mistake_memory,
             "mistake_memory_match_mode": memory_mode,
         },
+        # See governed_bi.eval.repro: corpus/ is a shared live tree, not
+        # versioned per experiment. This pins exactly which corpus commit
+        # this run's numbers reflect (Experiment 007 Round 6 finding).
+        "corpus_git_state": corpus_git_state(REPO_ROOT),
     }
 
     print("\n== summary ==")
