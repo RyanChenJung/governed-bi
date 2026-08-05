@@ -69,6 +69,10 @@ def main() -> None:
                          help="override settings.enable_result_sanity_check (Round-1 "
                               "CHESS Unit Tester assertions) for this run; omit to use "
                               "whatever governed_bi.toml/.local.toml already say")
+    parser.add_argument("--pct-check", dest="pct_check", choices=["on", "off"], default=None,
+                         help="override settings.enable_structured_percentage_check "
+                              "(Experiment 007 Round H) for this run; omit to use whatever "
+                              "governed_bi.toml/.local.toml already say")
     parser.add_argument("--memory", dest="memory", choices=["on", "off"], default="off",
                          help="Round-6 Memo-SQL-pattern mistake memory: 'on' merges "
                               "runs/mistake_memory_olist.json (built by "
@@ -169,16 +173,21 @@ def main() -> None:
     sanity_check = settings.enable_result_sanity_check
     if args.sanity_check is not None:
         sanity_check = args.sanity_check == "on"
+    pct_check = getattr(settings, "enable_structured_percentage_check", False)
+    if args.pct_check is not None:
+        pct_check = args.pct_check == "on"
     eval_settings = Settings.for_env(
         Environment.dev,
         models=models,
         datasource=settings.datasource,
         allow_user_clarification=settings.allow_user_clarification,
         enable_result_sanity_check=sanity_check,
+        enable_structured_percentage_check=pct_check,
         enable_mistake_memory=enable_mistake_memory,
         mistake_memory_match_mode=memory_mode,
     )
     print(f"settings.enable_result_sanity_check={sanity_check}\n")
+    print(f"settings.enable_structured_percentage_check={pct_check}\n")
     print(f"settings.enable_mistake_memory={enable_mistake_memory} "
           f"match_mode={memory_mode}\n")
     identity = Identity(user="eval", all_access=True)
@@ -266,6 +275,7 @@ def main() -> None:
             "provider": models.provider,
             "llm_model": models.llm_model,
             "allow_user_clarification": settings.allow_user_clarification,
+            "enable_structured_percentage_check": pct_check,
             "enable_mistake_memory": enable_mistake_memory,
             "mistake_memory_match_mode": memory_mode,
         },

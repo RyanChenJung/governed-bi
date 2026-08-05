@@ -243,6 +243,13 @@ def agent_solver(
                     for e in (prov.get("governance_ledger") or [])
                     if e.get("action") == "run_query" and "sanity_check" in e
                 ],
+                # Experiment 007 Round H (redone): same pattern as sanity_checks
+                # above, for the structured percentage-scale check.
+                "structured_percentage_checks": [
+                    e["structured_percentage_check"]
+                    for e in (prov.get("governance_ledger") or [])
+                    if e.get("action") == "run_query" and "structured_percentage_check" in e
+                ],
             }
             return answer.sql, meta
 
