@@ -62,7 +62,7 @@ def _supports_parallel_tool_calls(model: object) -> bool:
 
 import sqlglot
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from ..corpus.schemas import NoteAsset, TableAsset
@@ -321,6 +321,7 @@ class GovernanceMiddleware(AgentMiddleware):
         args = request.tool_call.get("args") or {}
         licensed_ids = list(request.state.get("licensed") or [])
         prior_ledger = list(request.state.get("ledger") or [])
+        question = self._latest_human_question(request.state)
 
         raw = None  # only meaningful for run_query; guards the dialect-repair path below
         repair_dialect = None  # set if _dialect_aware_transpile had to try a foreign dialect
@@ -458,13 +459,15 @@ class GovernanceMiddleware(AgentMiddleware):
                 }
                 sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
                 mm_extra, mm_suffix = self._mistake_memory_feedback(action, sql, prior_ledger)
+                pct_extra, pct_suffix = self._structured_percentage_check(action, sql, question)
                 entry.update(sanity_extra)
                 entry.update(mm_extra)
+                entry.update(pct_extra)
                 return Command(
                     update={
                         "messages": [
                             ToolMessage(
-                                content=render_result(result) + message_suffix + mm_suffix,
+                                content=render_result(result) + message_suffix + mm_suffix + pct_suffix,
                                 tool_call_id=tcid,
                             )
                         ],
@@ -501,13 +504,15 @@ class GovernanceMiddleware(AgentMiddleware):
         }
         sanity_extra, message_suffix = self._sanity_check(action, args, result, prior)
         mm_extra, mm_suffix = self._mistake_memory_feedback(action, sql, prior_ledger)
+        pct_extra, pct_suffix = self._structured_percentage_check(action, sql, question)
         entry.update(sanity_extra)
         entry.update(mm_extra)
+        entry.update(pct_extra)
         return Command(
             update={
                 "messages": [
                     ToolMessage(
-                        content=render_result(result) + message_suffix + mm_suffix,
+                        content=render_result(result) + message_suffix + mm_suffix + pct_suffix,
                         tool_call_id=tcid,
                     )
                 ],
@@ -544,6 +549,60 @@ class GovernanceMiddleware(AgentMiddleware):
             failures, attempt=prior_run_query_count + 1, cap=RUN_QUERY_CAP
         )
         return extra, suffix
+
+    # Deterministic percentage-scale check (Experiment 007 Round H, redone as a
+    # real code path per the original design: modify _sanity_check-adjacent
+    # logic, not a standalone script). Matches "100" as EITHER operand of a
+    # */÷ (the first version of this check, tested only as a throwaway eval
+    # script, only matched "X * 100" and missed "100 * X" — over-triggering on
+    # already-correct queries as a result; fixed here).
+    _PERCENT_QUESTION_RE = re.compile(r"\bpercent(age)?\b", re.IGNORECASE)
+    _HAS_PERCENT_SCALING_RE = re.compile(
+        r"(\*|/)\s*100(\.0)?\b|\b100(\.0)?\s*(\*|/)", re.IGNORECASE
+    )
+
+    def _structured_percentage_check(
+        self, action: str, sql: str, question: str | None
+    ) -> tuple[dict, str]:
+        """Flag a 'percentage' question whose SQL never scales by 100.
+
+        Deterministic, not open-ended (contrast ``_sanity_check``'s free-text
+        model-stated assertions) — a real, previously-diagnosed failure mode
+        (Experiment 006 K2-c: a percentage question answered as a 0-1 ratio).
+        No-op unless ``enable_structured_percentage_check`` is on, ``action``
+        is ``run_query``, the question text is available, and it actually
+        asks for a percentage.
+        """
+        if (
+            action != "run_query"
+            or not getattr(self._settings, "enable_structured_percentage_check", False)
+            or not question
+            or not self._PERCENT_QUESTION_RE.search(question)
+            or self._HAS_PERCENT_SCALING_RE.search(sql or "")
+        ):
+            return {}, ""
+        extra = {"structured_percentage_check": {"passed": False}}
+        suffix = (
+            "\n\n[structured check] this question asks for a PERCENTAGE (0-100 scale), "
+            "but your query's final result does not appear to be scaled by 100 (no `* 100` "
+            "or `/ 100`-style factor found). If your query computes a 0-1 ratio, multiply "
+            "the final value by 100."
+        )
+        return extra, suffix
+
+    @staticmethod
+    def _latest_human_question(state) -> str | None:
+        """Best-effort: the most recent HumanMessage's text content, or None."""
+        for m in reversed(state.get("messages") or []):
+            if isinstance(m, HumanMessage):
+                content = m.content
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    return "".join(
+                        b.get("text", "") if isinstance(b, dict) else str(b) for b in content
+                    )
+        return None
 
     def _mistake_memory_feedback(
         self, action: str, sql: str, prior_ledger: list[dict]

@@ -242,6 +242,17 @@ class Settings:
     # "question_text" (default) leaves Round 6's behavior completely unchanged.
     mistake_memory_match_mode: str = "question_text"  # "question_text" | "sql_features"
 
+    # ── Structured percentage-scale self-correction (Experiment 007 Round H) ──
+    # Round 1's sanity check is open-ended (the model states its own free-text
+    # assertions). Experiment 007 found open-ended self-correction ineffective
+    # but a DETERMINISTIC check net-positive on a real, previously-diagnosed
+    # failure mode: a question asking for a "percentage" but the generated SQL
+    # never scales the ratio by 100. When True, ``run_query`` checks this
+    # specific pattern and nudges a correction into the RUN_QUERY_CAP retry
+    # loop (see ``GovernanceMiddleware._structured_percentage_check``).
+    # Default False: without config, behavior is unchanged.
+    enable_structured_percentage_check: bool = False
+
     # ── Conversation checkpointer + portable run log (ADR 0004; see [logging]) ──
     conversation_checkpointer_kind: str = "sqlite"  # sqlite | postgres | memory
     conversation_checkpointer_path: str = "data/checkpoints/conversations.sqlite"
@@ -300,6 +311,7 @@ class Settings:
         enable_result_sanity_check: bool | None = None,
         enable_mistake_memory: bool | None = None,
         mistake_memory_match_mode: str | None = None,
+        enable_structured_percentage_check: bool | None = None,
         cors_origins: tuple[str, ...] | None = None,
         conversation_checkpointer_kind: str | None = None,
         conversation_checkpointer_path: str | None = None,
@@ -329,6 +341,8 @@ class Settings:
             base["enable_mistake_memory"] = enable_mistake_memory
         if mistake_memory_match_mode is not None:
             base["mistake_memory_match_mode"] = mistake_memory_match_mode
+        if enable_structured_percentage_check is not None:
+            base["enable_structured_percentage_check"] = enable_structured_percentage_check
         if cors_origins is not None:
             base["cors_origins"] = cors_origins
         if conversation_checkpointer_kind is not None:
@@ -531,6 +545,11 @@ def load_settings(
     enable_mistake_memory = (
         bool(serve["enable_mistake_memory"]) if "enable_mistake_memory" in serve else None
     )
+    enable_structured_percentage_check = (
+        bool(serve["enable_structured_percentage_check"])
+        if "enable_structured_percentage_check" in serve
+        else None
+    )
     cors_origins = (
         _cors_origins_from(serve["cors_origins"]) if "cors_origins" in serve else None
     )
@@ -556,6 +575,7 @@ def load_settings(
         ui_display_mode=ui_display_mode,
         enable_result_sanity_check=enable_result_sanity_check,
         enable_mistake_memory=enable_mistake_memory,
+        enable_structured_percentage_check=enable_structured_percentage_check,
         cors_origins=cors_origins,
         conversation_checkpointer_kind=str(ckpt_kind) if ckpt_kind is not None else None,
         conversation_checkpointer_path=str(ckpt_path) if ckpt_path is not None else None,
