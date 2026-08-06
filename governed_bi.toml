@@ -95,6 +95,12 @@ cors_origins = ["http://localhost:3000"]
 # the frontend can still reveal the audit view client-side without a re-fetch.
 ui_display_mode = "audit"
 
+# enable_result_sanity_check / enable_mistake_memory / mistake_memory_match_mode
+# / enable_structured_percentage_check are still code defaults (all False /
+# "question_text") — not set here, same as the committed baseline for those
+# earlier experimental toggles. See Settings in config.py for what each does;
+# opt in via governed_bi.local.toml for testing.
+
 # Memory / cache / few-shot numeric gates (Architecture §7) are still code
 # defaults on Settings today — not yet loaded from this file.
 

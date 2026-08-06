@@ -61,6 +61,8 @@ def test_capabilities_reports_offline_dev(client):
     # UtkuAI Phase 1b: unset in the committed governed_bi.toml -> defaults to
     # "audit" (today's technical-cockpit behavior, unchanged).
     assert body["ui_display_mode"] == "audit"
+    # Experiment 007 Round H: unset in the committed governed_bi.toml -> defaults off.
+    assert body["enable_structured_percentage_check"] is False
 
 
 def test_capabilities_flags_reflect_the_stack():

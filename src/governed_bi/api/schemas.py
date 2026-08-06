@@ -42,6 +42,12 @@ class CapabilitiesResponse(_View):
     # which default rendering to start on (it may still let the user reveal
     # the audit view client-side without a re-fetch).
     ui_display_mode: str = "audit"
+    # Experiment 007 Round H, productized: a static settings passthrough (no
+    # live override, same pattern as ui_display_mode above) — whether the
+    # deterministic percentage-scale self-correction check is active. Lets
+    # the UI show an indicator/badge; the admin sets the underlying toggle
+    # in governed_bi.toml, not via this API.
+    enable_structured_percentage_check: bool = False
 
 
 # ── health ────────────────────────────────────────────────────────────────── #

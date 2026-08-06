@@ -165,6 +165,10 @@ def create_app(stack: ServeStack | None = None):
             # UtkuAI Phase 1b: a static settings passthrough (no live override,
             # unlike can_clarify above) — the admin sets it in governed_bi.toml.
             ui_display_mode=stack.settings.ui_display_mode,
+            # Experiment 007 Round H, productized: same static-passthrough pattern.
+            enable_structured_percentage_check=getattr(
+                stack.settings, "enable_structured_percentage_check", False
+            ),
         )
 
     @app.post(

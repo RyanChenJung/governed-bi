@@ -141,7 +141,19 @@ still failing.
   differently-phrased question): confirm the agent doesn't repeat the exact
   same mistake — the note was actually retrieved and used, not just written.
 
-## 9. Regression baseline
+## 9. Structured percentage check (Experiment 007 Round H, productized)
+
+- [ ] With `enable_structured_percentage_check = false` (default): ask a
+  question containing "percentage"/"percent" whose first SQL attempt has no
+  `*100`/`/100` scaling. Confirm no `[structured check]` nudge appears and
+  `/capabilities` reports `enable_structured_percentage_check: false`.
+- [ ] With it `true`: same scenario — confirm a `[structured check]` nudge
+  appears in the tool result and the ledger's `run_query` entry carries a
+  `structured_percentage_check: {"passed": false}` field. Confirm a query
+  that's *already* correctly scaled (either `X * 100` or `100 * X` ordering)
+  never triggers a false positive.
+
+## 10. Regression baseline
 
 - [ ] Backend: `uv run pytest tests/ -q` — pass count ≥ the last known-good
   baseline (see RESUME.md's most recent entry for the current number), same
