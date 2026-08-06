@@ -250,6 +250,11 @@ def agent_solver(
                     for e in (prov.get("governance_ledger") or [])
                     if e.get("action") == "run_query" and "structured_percentage_check" in e
                 ],
+                # Full passthrough, reused by scripts/mine_structured_check_drafts.py
+                # (Experiment 007 Round I productized) to mine (flagged, corrected)
+                # SQL pairs the sanity_checks/structured_percentage_checks summaries
+                # above can't reconstruct on their own (they drop the SQL text).
+                "governance_ledger": prov.get("governance_ledger"),
             }
             return answer.sql, meta
 

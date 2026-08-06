@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..corpus.schemas import NoteAsset, NoteKind, ProvenanceStatus
+from ..corpus.schemas import Governance, NoteAsset, NoteKind, ProvenanceStatus
 
 if TYPE_CHECKING:
     from ..llm import ChatClient
@@ -245,6 +245,70 @@ def mistake_from_ledger(ledger: "list[dict]") -> "tuple[str, str] | None":
                 return last_failed_sql, fixed_sql
             return None
     return None
+
+
+def structured_check_mistake_from_ledger(ledger: "list[dict]") -> "tuple[str, str] | None":
+    """Experiment 007 Round I productized (offline, admin-reviewed): a
+    (flagged, corrected) SQL pair from a turn where the structured percentage
+    check (``analyst.middleware.GovernanceMiddleware._structured_percentage_check``)
+    fired.
+
+    Distinct from :func:`mistake_from_ledger`: that function only recognizes
+    an execution FAILURE (``verdict`` ``"block"``/``"error"``) as the "wrong"
+    side. The structured check instead flags a ``run_query`` that EXECUTED
+    successfully (``verdict`` ``"pass"``) but is semantically wrong — there is
+    no gold SQL to confirm the later attempt is actually correct, only that
+    the model changed its answer after being nudged. This lower trust bar is
+    why callers should write the result as a DRAFT (see
+    :func:`build_mistake_note_draft`) requiring human approval before it can
+    reach the Analyst's prompt, unlike :func:`mistake_from_ledger`'s live path
+    which auto-certifies.
+
+    Returns ``(flagged_sql, corrected_sql)`` for the first flagged attempt and
+    the next differently-worded ``run_query`` pass after it, or ``None`` if no
+    such pair exists in ``ledger``.
+    """
+    flagged_sql: str | None = None
+    for entry in ledger:
+        if entry.get("action") != "run_query":
+            continue
+        check = entry.get("structured_percentage_check")
+        if check is not None and check.get("passed") is False:
+            sql = entry.get("sql")
+            if sql:
+                flagged_sql = sql
+        elif flagged_sql is not None and entry.get("verdict") == "pass":
+            corrected_sql = entry.get("sql")
+            if corrected_sql and corrected_sql != flagged_sql:
+                return flagged_sql, corrected_sql
+            return None
+    return None
+
+
+def build_mistake_note_draft(
+    schema: str, mistake: MistakeInput, characterization: MistakeCharacterization
+) -> NoteAsset:
+    """Same content shape as :func:`build_mistake_note`, but written as a
+    DRAFT awaiting human approval (``publication_status=proposed`` AND
+    ``governance.excluded=True`` — the same shape ``AssetBag._record_draft``
+    uses for an Enhancer-decided new concept) instead of auto-certified.
+
+    For mistake sources with a lower trust bar than Round 6's gold-labeled
+    train-split mining or the live ledger's execution-failure signal — e.g.
+    :func:`structured_check_mistake_from_ledger`'s (flagged, corrected) pair,
+    which has no gold SQL to confirm the "corrected" side is actually right,
+    only that the model changed its mind. ``analyst/note_inject.py`` gates
+    injection on ``governance.excluded`` alone, so this note cannot reach the
+    Analyst's prompt until an admin approves it via the existing
+    ``POST /corpus/drafts/{id}/approve`` route (unmodified — it already
+    accepts any ``NoteAsset`` matching this shape, regardless of source).
+    """
+    note = build_mistake_note(schema, mistake, characterization)
+    data = note.model_dump(mode="python")
+    data["id"] = f"{data['id']}_draft"
+    data["publication_status"] = ProvenanceStatus.proposed
+    data["governance"] = Governance(excluded=True)
+    return NoteAsset.model_validate(data)
 
 
 def build_mistake_memory(
