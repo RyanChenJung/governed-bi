@@ -1,23 +1,29 @@
 asset_type: note
 id: note_olist_full_price
 kind: business_rule
-scope: [tbl_olist_line_items]
-summary: >
-  "Full-price item" / "no discount applied" / "no promotion attached" means
-  line_items.disc_code IS NULL. Marketing codes are WELCOME10, LOYALTY15,
-  SEASONAL20; internal codes STAFF50 and PARTNER are excluded from
-  marketing metrics but still count as discounted (non-full-price) for this
-  definition. The `discount` column (REAL, the discount amount) is a
-  SEPARATE field from `disc_code` (TEXT, the discount code) — do not filter
-  or condition on `discount = 0` when the question is about discount
-  *codes*; a row can have disc_code IS NULL and a nonzero legacy `discount`
-  value, or vice versa. Confirmed as a real, reproducible confusion
-  (Experiment 006 Finding, K2-b): a differently-worded "full price" question
-  incorrectly added `AND discount = 0` on top of the correct
-  `disc_code IS NULL` filter.
+scope:
+- tbl_olist_line_items
+summary: '"Full-price item" / "no discount applied" / "no promotion attached" means
+  line_items.disc_code IS NULL. Marketing codes are WELCOME10, LOYALTY15, SEASONAL20;
+  internal codes STAFF50 and PARTNER are excluded from marketing metrics but still
+  count as discounted (non-full-price) for this definition. The `discount` column
+  (REAL, the discount amount) is a SEPARATE field from `disc_code` (TEXT, the discount
+  code) — do not filter or condition on `discount = 0` when the question is about
+  discount *codes*; a row can have disc_code IS NULL and a nonzero legacy `discount`
+  value, or vice versa. Confirmed as a real, reproducible confusion (Experiment 006
+  Finding, K2-b): a differently-worded "full price" question incorrectly added `AND
+  discount = 0` on top of the correct `disc_code IS NULL` filter.
+
+  '
+triggers: []
 activation: always
+normative_force: must_honour
 confidence: 0.9
+related_notes: []
 publication_status: draft
 audit:
-  evidence: "olist semantic_layer.md section 8 (Discounts & Pricing)"
-  provenance: { source: curator, status: draft }
+  provenance:
+    source: curator
+    status: draft
+    source_refs: []
+  evidence: olist semantic_layer.md section 8 (Discounts & Pricing)

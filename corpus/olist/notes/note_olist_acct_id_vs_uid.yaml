@@ -1,16 +1,26 @@
 asset_type: note
 id: note_olist_acct_id_vs_uid
 kind: business_rule
-scope: [tbl_olist_accounts, tbl_olist_txns]
-summary: >
-  accounts.acct_id is a per-order account identifier (one per order, not the
-  real customer); accounts.acct_uid is the real-world customer identifier
-  (one per person, who can have multiple acct_ids). Any "unique customer" or
-  "real customer" question must COUNT(DISTINCT acct_uid); COUNT(DISTINCT
-  acct_id) counts orders/accounts, not customers.
+scope:
+- tbl_olist_accounts
+- tbl_olist_txns
+summary: 'accounts.acct_id is a per-order account identifier (one per order, not the
+  real customer); accounts.acct_uid is the real-world customer identifier (one per
+  person, who can have multiple acct_ids). Any "unique customer" or "real customer"
+  question must COUNT(DISTINCT acct_uid); COUNT(DISTINCT acct_id) counts orders/accounts,
+  not customers.
+
+  '
+triggers: []
 activation: always
+normative_force: must_honour
 confidence: 0.9
+related_notes: []
 publication_status: draft
 audit:
-  evidence: "accounts table carries both acct_id and acct_uid columns; olist semantic_layer.md section 3 (Customer Identity)"
-  provenance: { source: curator, status: draft }
+  provenance:
+    source: curator
+    status: draft
+    source_refs: []
+  evidence: accounts table carries both acct_id and acct_uid columns; olist semantic_layer.md
+    section 3 (Customer Identity)

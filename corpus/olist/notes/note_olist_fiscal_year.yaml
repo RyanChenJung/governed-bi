@@ -1,14 +1,22 @@
 asset_type: note
 id: note_olist_fiscal_year
 kind: business_rule
-scope: [tbl_olist_txns]
-summary: >
-  Fiscal year starts October 1: FY2020 runs from 2019-10-01 through
-  2020-09-30. FY quarters are Q1 Oct-Dec, Q2 Jan-Mar, Q3 Apr-Jun, Q4 Jul-Sep.
-  Do not assume a calendar-year (Jan-Dec) fiscal year for txns.purchased_at.
+scope:
+- tbl_olist_txns
+summary: 'Fiscal year starts October 1: FY2020 runs from 2019-10-01 through 2020-09-30.
+  FY quarters are Q1 Oct-Dec, Q2 Jan-Mar, Q3 Apr-Jun, Q4 Jul-Sep. Do not assume a
+  calendar-year (Jan-Dec) fiscal year for txns.purchased_at.
+
+  '
+triggers: []
 activation: always
+normative_force: must_honour
 confidence: 0.9
+related_notes: []
 publication_status: draft
 audit:
-  evidence: "olist semantic_layer.md section 2 (Temporal & Fiscal Rules)"
-  provenance: { source: curator, status: draft }
+  provenance:
+    source: curator
+    status: draft
+    source_refs: []
+  evidence: olist semantic_layer.md section 2 (Temporal & Fiscal Rules)

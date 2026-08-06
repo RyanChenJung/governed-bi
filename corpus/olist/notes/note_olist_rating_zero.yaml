@@ -1,14 +1,23 @@
 asset_type: note
 id: note_olist_rating_zero
 kind: business_rule
-scope: [tbl_olist_reviews]
-summary: >
-  reviews.rating is 0 for "not yet rated" (not a poor rating of 0/5); 1-5 are
-  the valid rating scale. Exclude rating = 0 rows from all satisfaction/NPS
-  averages and distributions, since including them drags down the score.
+scope:
+- tbl_olist_reviews
+summary: 'reviews.rating is 0 for "not yet rated" (not a poor rating of 0/5); 1-5
+  are the valid rating scale. Exclude rating = 0 rows from all satisfaction/NPS averages
+  and distributions, since including them drags down the score.
+
+  '
+triggers: []
 activation: always
+normative_force: must_honour
 confidence: 0.9
+related_notes: []
 publication_status: draft
 audit:
-  evidence: "reviews.rating sample values include 0 alongside 1-5; olist semantic_layer.md section 9 (Reviews & Satisfaction)"
-  provenance: { source: curator, status: draft }
+  provenance:
+    source: curator
+    status: draft
+    source_refs: []
+  evidence: reviews.rating sample values include 0 alongside 1-5; olist semantic_layer.md
+    section 9 (Reviews & Satisfaction)

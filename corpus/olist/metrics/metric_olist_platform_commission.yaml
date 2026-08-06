@@ -5,11 +5,17 @@ base_table: tbl_olist_line_items
 expression: SUM(line_items.unit_price * vendors.comm_rate)
 dimensions: []
 rules:
-  - kind: join
-    note: "join line_items to vendors on vendor_id to get comm_rate"
-  - kind: definition
-    note: "commission is calculated on unit_price only, NOT on payments.amount or freight. comm_rate varies by vendor tier: standard=0.15, premium=0.10, enterprise=0.05 (lower tiers pay a HIGHER rate, not lower — do not assume 'premium' means a premium/higher rate)."
+- kind: join
+  note: join line_items to vendors on vendor_id to get comm_rate
+- kind: definition
+  note: 'commission is calculated on unit_price only, NOT on payments.amount or freight.
+    comm_rate varies by vendor tier: standard=0.15, premium=0.10, enterprise=0.05
+    (lower tiers pay a HIGHER rate, not lower — do not assume ''premium'' means a
+    premium/higher rate).'
 confidence: 0.9
 audit:
-  evidence: "olist semantic_layer.md section 4 (Commission)"
-  provenance: { source: curator, status: draft }
+  provenance:
+    source: curator
+    status: draft
+    source_refs: []
+  evidence: olist semantic_layer.md section 4 (Commission)
