@@ -34,6 +34,7 @@ from governed_bi.api.trace_store import (
 )
 from governed_bi.register.assets import ASSET_REGISTER
 from governed_bi.serve.messages import last_ai_text
+from governed_bi.serve.runtime import bool_knob
 
 __all__ = ["app"]
 
@@ -145,6 +146,15 @@ def capabilities() -> dict[str, Any]:
         # editing this line. Reporting a capability the mounted transport lacks is the same
         # defect as a reliability badge with nothing behind it.
         "can_clarify": can_stream and session.agent_model is not None,
+        # UtkuAI, ported (utku-ai-v2-porting-spec.md), not upstream. Read the same way every
+        # other knob is: session.knobs_resolved is the flat resolved mapping bool_knob's first
+        # precedence tier already checks, so this is the register's declared value unless a
+        # deployment overrode it -- never a second literal that could drift from what a turn
+        # actually used.
+        "enable_structured_percentage_check": bool_knob(
+            session.knobs_resolved, "enable_structured_percentage_check"
+        ),
+        "enable_clarification_to_draft": bool_knob(session.knobs_resolved, "enable_clarification_to_draft"),
     }
 
 
@@ -211,6 +221,43 @@ def corpus_assets(type: str | None = None) -> list[dict[str, Any]]:
         for a in sorted(session.assets_by_id.values(), key=lambda a: a.id)
         if type is None or a.asset_type.value == type
     ]
+
+
+@app.post("/corpus/drafts/{asset_id}/approve")
+def approve_draft_route(asset_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Certify one ``proposed`` draft (UtkuAI mistake-memory / Enhancer, ported onto v2).
+
+    **Not an upstream route.** v2 deletes the HTTP corpus-write surface entirely (ADR 0005
+    §1.6: "the corpus is trusted, the incoming question is not") and has no ``curator/`` layer
+    yet to review a draft through. This is the minimal admin-facing half of
+    ``corpus/drafts.py`` — see ``utku-ai-v2-porting-spec.md`` for why it lives here rather
+    than waiting on upstream.
+
+    Request body: ``{"by": "admin@example.com"}`` (optional — recorded in ``audit.extra``,
+    never required).
+
+    Writes to disk only. ``session.assets_by_id``/the index are run constants (ADR 0005) and
+    do not observe this write until the corpus is reloaded — the same limitation a live
+    ``run_query`` retrieval has for any other out-of-band corpus edit.
+    """
+    from fastapi import HTTPException
+
+    from governed_bi.corpus.drafts import DraftNotFound, DraftNotPending, approve_draft as approve
+
+    session = _session()
+    if session.corpus_root is None:
+        raise HTTPException(status_code=409, detail="this session has no corpus_root to write back to")
+    try:
+        certified = approve(session.corpus_root, asset_id, by=(body or {}).get("by"))
+    except DraftNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DraftNotPending as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "id": certified.id,
+        "asset_type": certified.asset_type.value,
+        "provenance_status": _provenance_status(certified),
+    }
 
 
 def _graph_payload() -> dict[str, Any]:
@@ -506,11 +553,43 @@ def chat_resume(body: dict[str, Any]) -> dict[str, Any]:
         )
     except ResumeRejected:
         return _error("resume identity mismatch: the caller answering is not the caller that was asked")
+
+    _mine_clarification_draft(session, pending, reply, out)
+
     # Logged here too, and with the *clarification* as the question. A resumed turn is the
     # one that produces the record, so leaving it out would make every clarified
     # conversation invisible to the audit surface — which is the half of the traffic most
     # worth auditing.
     return _logged(_shape(out), str(pending.get("question") or ""))
+
+
+def _mine_clarification_draft(
+    session: Any, pending: dict[str, Any], reply: dict[str, Any], out: dict[str, Any]
+) -> None:
+    """UtkuAI, ported: an answered (not declined) clarification becomes a TermAsset draft.
+
+    Gated on ``enable_clarification_to_draft`` (off by default), read off ``out`` the same
+    way ``run_query``'s structured check reads its own knob — the resumed turn's own state,
+    not a session-level constant, so a per-turn override behaves the same way every other
+    knob does. Never lets a mining failure surface as a resume failure: the clarification was
+    answered and the turn must complete regardless of whether the corpus write worked.
+    """
+    from governed_bi.corpus.drafts import submit_draft
+    from governed_bi.curator.clarification import draft_from_clarification, resolved_answer_text
+
+    if not bool_knob(out, "enable_clarification_to_draft") or session.corpus_root is None:
+        return
+    answer_text = resolved_answer_text(reply)
+    if not answer_text:
+        return
+    question = str(pending.get("question") or "")
+    if not question:
+        return
+    try:
+        draft = draft_from_clarification(question, answer_text, schema=session.db_id)
+        submit_draft(session.corpus_root, draft, namespace=session.db_id)
+    except Exception:  # noqa: BLE001 — mining is best-effort, never fatal to the resumed turn
+        pass
 
 
 def _config(session: Any, question: str | None, thread_id: str) -> dict[str, Any]:
