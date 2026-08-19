@@ -12,12 +12,19 @@
  * clarification-derived terms with no status field at all -- by design, it is a settled
  * history, not a work queue, and it only ever sees clarification-derived `TermAsset`s
  * (`curation_routes.py::_is_clarification_derived`), not every producer of a draft.
- * `AssetBrowser`/`AssetTable` already show `proposed` rows via their provenance filter, but an
- * approve button dropped onto one of those rows would have no room to also show why the row
- * exists -- the browser's grid clamps every cell to keep ~4.2k rows scannable, which is
- * backwards for the one row type where more context, not less, is the point. A dedicated queue,
- * mirroring `ConflictsPanel`/`ClarificationsPanel`, is the one place built to show a full
- * question-and-answer per card and put the decision beside it.
+ * `AssetBrowser`/`AssetTable` showed `proposed` rows via their provenance filter when this was
+ * written, and an approve button dropped onto one of those rows would have had no room to also
+ * show why the row exists -- the browser's grid clamps every cell to keep ~4.2k rows scannable,
+ * which is backwards for the one row type where more context, not less, is the point. A
+ * dedicated queue, mirroring `ConflictsPanel`/`ClarificationsPanel`, is the one place built to
+ * show a full question-and-answer per card and put the decision beside it.
+ *
+ * **Since 2026-08-19 the browser no longer shows them at all, which makes this the only
+ * surface.** `serve/session.py::_visible` now withholds uncertified provenance, so
+ * `/corpus/assets` -- which reads `session.assets_by_id` -- returns certified assets only, and
+ * the browser's provenance dropdown is built from the rows it received (`provenanceOptions`), so
+ * the `proposed` option simply stops being offered rather than becoming a filter that matches
+ * nothing. No capability moved: this panel reads the corpus off disk and always did.
  *
  * **Reads `GET /corpus/drafts` (fix round), not `/corpus/assets` filtered client-side.** The
  * first version reused `/corpus/assets` -- already declared, already returns
@@ -116,8 +123,8 @@ function DraftCard({ row, editable }: { row: DraftRow; editable: boolean }) {
       <CardContent className="space-y-3">
         {row.body && <p className="whitespace-pre-wrap text-sm">{row.body}</p>}
         <p className="text-xs text-muted-foreground">
-          Still proposed — the certified-only check in corpus/analyst.py keeps this from
-          licensing a column in a live answer until an admin approves it.
+          Still proposed — it is withheld from the corpus the engine serves, so it cannot reach a
+          live answer or license a column until an admin approves it.
         </p>
         {editable ? (
           <Button size="sm" disabled={approving} onClick={() => void approve()}>
