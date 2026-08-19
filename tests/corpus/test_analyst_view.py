@@ -81,11 +81,12 @@ def test_a_proposed_draft_is_invisible_to_the_analyst_but_a_certified_one_is_not
     freshly-restamped `proposed` write would license a column exactly like a certified one.
 
     **Scoped to `for_analyst` deliberately.** This docstring used to say such a write "would
-    index and serve exactly like a certified one", which reaches past anything asserted here
-    and was not true: the index is built from `serve/session.py::_visible`, which does not read
-    provenance, so a proposed asset is a retrieval candidate and is rendered into the model's
-    context whatever this view decides. That half is
-    `tests/serve/test_a_proposed_asset_does_not_leave_the_index.py`.
+    index and serve exactly like a certified one", which reaches past anything asserted here and
+    was false when written: `_visible` read no provenance, so a draft was a retrieval candidate
+    and was rendered into the model's context whatever this view decided. `_visible` gained the
+    check on 2026-08-19, so the two halves now agree — but they agree because two functions were
+    made to, not because this one covers both, and
+    `tests/serve/test_a_proposed_asset_leaves_the_index.py` is what holds the other side.
     """
     from governed_bi.corpus.analyst import for_analyst
     from governed_bi.corpus.schema import (

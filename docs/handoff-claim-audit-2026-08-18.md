@@ -131,11 +131,22 @@ float/int knobs declare an env var — no bool knob has one). Tracked; interim m
   the stronger claim.
 - **Refusal → re-ask.** Certifying a term does not reliably make the originally-refused phrasing
   route. The wrong-answer path (report → correct → re-ask) is verified end to end; the refusal
-  path is not.
-- **A `proposed` asset already reaches the model's context.** `serve/session.py`'s `_visible`
-  filters only `governance.excluded`, with no provenance check. Certification *is* gated for
-  licensing (`corpus/analyst.py` is certified-only), so the two halves disagree about what
-  `proposed` means. Open question, needs the upstream owner.
+  path is not. **Mechanism found on 2026-08-19:** the index is built from `_visible` and
+  `IndexEntry` carries no provenance, so before that date certifying an asset changed *nothing a
+  retrieval reads* — a draft became a candidate when it was written, not when it was approved,
+  and a question that failed at routing could not be fixed by approving anything. Proven by
+  `tests/serve/test_a_proposed_asset_leaves_the_index.py::test_certifying_an_asset_changes_what_can_be_retrieved`,
+  which is the first point at which approval reaches retrieval at all. Necessary, not sufficient:
+  one term entering the index does not oblige routing to select its schema, so whether the
+  refused phrasing now gets through is still an unmade measurement.
+- **A `proposed` asset reaches the model's context — fixed 2026-08-19.** `serve/session.py`'s
+  `_visible` filtered only `governance.excluded`, with no provenance check, while certification
+  *was* gated for licensing (`corpus/analyst.py` is certified-only) — so the two halves
+  disagreed about what `proposed` meant. `_visible` now withholds uncertified provenance through
+  the same closure it withholds exclusion through. Two things this leaves behind: any number
+  measured before the change was measured with uncertified definitions reachable (36 turns in
+  `runs/serve` ran with `enable_clarification_to_draft` on), and the admin surfaces are
+  unaffected because they read the corpus off disk (`_reload_assets`), not `assets_by_id`.
 
 ---
 

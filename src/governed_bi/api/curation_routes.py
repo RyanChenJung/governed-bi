@@ -536,23 +536,27 @@ def make_curation_router(session: Any) -> APIRouter:
 
         **What "reaches the identical certification gate" does and does not mean, stated plainly
         so the next reader does not have to re-derive it by tracing the session builder.**
-        Certification is gated: ``for_analyst``'s certified-only filter (``corpus/analyst.py``)
-        still stands between a ``proposed`` term and licensing a *column* in ``check()``, so a
-        reader's own words cannot make a column queryable on their say-so alone. **Retrieval
-        visibility of a ``proposed`` asset is not gated, and this is true today for every source
-        that reaches this fold, not only this one.** ``serve/session.py`` builds
-        ``assets_by_id`` -- and the retrieval index built from it -- by filtering only
-        ``governance.excluded``; it does not read ``audit.provenance`` at all. So the term this
-        route writes is retrievable, and is rendered into the model's context
-        (``serve/nodes/assemble.py`` -> ``serve/context.py::render_context``, both reading
-        ``assets_by_id`` directly, never ``for_analyst``'s certified view) on the very next turn
-        served by a session built over this corpus root -- before any admin has looked at it, let
-        alone approved it. This is pre-existing and identical for a ``curator``/``live_chat``/
-        ``elicitation_wizard``-sourced draft folded through the same function; this route adds no
-        new exposure and, per this initiative's additive-only constraint, does not add a
-        provenance filter to close it either. Whether ``_visible`` should also filter on
-        provenance is a question about the shared fold path, not about this route, and is
-        recorded rather than decided here.
+        Certification is gated on **both** halves, and since 2026-08-19 they agree.
+        ``for_analyst``'s certified-only filter (``corpus/analyst.py``) stands between a
+        ``proposed`` term and licensing a *column* in ``check()``, so a reader's own words cannot
+        make a column queryable on their say-so alone; ``serve/session.py::_visible`` now drops
+        uncertified provenance through the same closure it drops ``governance.excluded`` through,
+        so the term this route writes is **not** a retrieval candidate and is **not** rendered
+        into the model's context (``serve/nodes/assemble.py`` -> ``serve/context.py::
+        render_context``, both reading ``assets_by_id``) until an admin approves it.
+
+        **This paragraph said the opposite until that date, and the opposite was true.**
+        ``_visible`` filtered on exclusion alone and read ``audit.provenance`` not at all, so
+        every source reaching this fold -- ``curator``/``live_chat``/``elicitation_wizard`` alike
+        -- put a draft in front of the model on the very next turn served over this corpus root,
+        before any admin had looked at it. The gap was recorded here rather than decided, under
+        this initiative's additive-only constraint, and closing it was a separate change with its
+        own test (``tests/serve/test_a_proposed_asset_leaves_the_index.py``). Two consequences
+        outlived the additive constraint and are worth knowing when reading anything measured
+        before the fix: certifying an asset could not change retrieval, because ``IndexEntry``
+        carries no provenance and the draft became a candidate when it was *written*; and
+        ``enable_clarification_to_draft`` was declared ``Role.operational`` on a justification
+        that only became true afterwards.
 
         Request body: ``{"question": "...", "answer": "...", "turn_id"?: "..."}`` -- ``question``/
         ``answer`` are both required, else 422; ``turn_id`` is optional. ``answer`` matches every

@@ -465,17 +465,23 @@ def make_trust_loop_metrics_router(session: Any, turn_log: Any) -> APIRouter:
                 if session.corpus_root is None
                 else "Every ledger this route reads was reachable; see `retrieved.method` for "
                 "the one counter whose signal is weaker than its name suggests.",
-                # A population caveat, not a defect in any counter above. Stated as a mechanism
-                # rather than a count so nothing here can go stale: the count of affected turns
-                # belongs to whoever re-measures, and `knobs_resolved` on each scanned record is
-                # where they would read it.
-                "`refusals` is not a count over a corpus of certified rules only. A `proposed` "
-                "draft is not withheld from retrieval -- `serve/session.py::_visible` filters on "
-                "`governance.excluded` and never reads provenance -- so in any window where "
-                "`enable_clarification_to_draft` or `enable_mistake_memory_mining` was on, some "
-                "turns were answered with an uncertified definition in context. Pinned by "
-                "`tests/serve/test_a_proposed_asset_does_not_leave_the_index.py`; the knob "
-                "register carries the same correction.",
+                # A caveat about the ledger's own history, not a defect in any counter above,
+                # and it does not expire when the code is fixed: rows written before
+                # 2026-08-19 were produced under different retrieval than rows written after.
+                # Stated as a mechanism rather than a count because the count belongs to
+                # whoever re-measures -- `knobs_resolved` on each scanned record is where they
+                # would read it, and `asked_at` is where they would split the population.
+                "**Turns served before 2026-08-19 are not comparable with turns served after, "
+                "and `refusals` does not separate them.** Until that date "
+                "`serve/session.py::_visible` filtered on `governance.excluded` and read no "
+                "provenance, so a `proposed` draft was a retrieval candidate and was rendered "
+                "into the model's context the moment it was written -- an uncertified "
+                "definition could answer a question in any window where "
+                "`enable_clarification_to_draft` or `enable_mistake_memory_mining` was on. "
+                "Both halves now agree that only `certified` serves "
+                "(`tests/serve/test_a_proposed_asset_leaves_the_index.py`), which also means "
+                "certification reaches retrieval for the first time -- so a refusal count "
+                "spanning the change is a count over two different engines.",
             ],
         }
 

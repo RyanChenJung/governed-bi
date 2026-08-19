@@ -20,7 +20,14 @@ from governed_bi.register.prompts import select as selected_variants
 
 from ..corpus.analyst import for_analyst
 from ..corpus.hash import corpus_content_hash
-from ..corpus.schema import Asset, AssetType, MetricAsset, TableAsset, TermAsset
+from ..corpus.schema import (
+    Asset,
+    AssetType,
+    MetricAsset,
+    ProvenanceStatus,
+    TableAsset,
+    TermAsset,
+)
 from ..corpus.store import load as load_corpus
 from ..corpus.store import write as write_asset
 from ..model.embedder import embedding_knobs
@@ -204,6 +211,39 @@ def _is_excluded(asset: Any) -> bool:
     return bool(getattr(getattr(asset, "governance", None), "excluded", False))
 
 
+def _is_uncertified(asset: Any) -> bool:
+    """``asset`` carries provenance saying no admin has approved it yet.
+
+    **Absence of provenance is not evidence of a draft.** The seeded corpora carry no ``audit``
+    block at all, so reading a missing one as uncertified would withhold every asset this
+    project has ever shipped. ``corpus/analyst.py::for_analyst`` draws the line in the same
+    place and says so in the same words; the two must agree, because two definitions of one
+    disposition that drifted is what ``govern/check.py``'s B10 guard exists for.
+    """
+    provenance = getattr(getattr(asset, "audit", None), "provenance", None)
+    if provenance is None:
+        return False
+    return getattr(provenance, "status", None) is not ProvenanceStatus.certified
+
+
+def _is_withheld(asset: Any) -> bool:
+    """``asset`` must not reach the served set, for either of two independent reasons.
+
+    Governance is a human's refusal to serve something; provenance is the absence of a human's
+    approval. They answer different questions and neither implies the other, but the *action*
+    is identical — leave the index, ``assets_by_id`` and the structure — so they share one
+    closure rather than two filters that could disagree.
+
+    Provenance joined this predicate on 2026-08-19. Until then ``_visible`` filtered on
+    exclusion only, so a ``proposed`` draft was a retrieval candidate and was rendered into the
+    model's context, while ``for_analyst`` refused to let it license a column: retrieval and
+    authorisation held two different answers to what ``proposed`` meant. Three places in this
+    repository asserted the opposite in prose and nothing checked them, which is why
+    ``tests/serve/test_a_proposed_asset_leaves_the_index.py`` exists.
+    """
+    return _is_excluded(asset) or _is_uncertified(asset)
+
+
 #: The references a type **cannot lose**. ``build_structure`` records a *fatal* problem when one
 #: of these fails to resolve, so an asset whose required reference is excluded has to leave with
 #: it — otherwise honouring a governance flag produces a corpus that refuses to serve.
@@ -219,8 +259,8 @@ _REQUIRED_TABLE_REFS: Mapping[AssetType, tuple[str, ...]] = {
 }
 
 
-def _excluded_closure(assets: Sequence[Asset]) -> frozenset[str]:
-    """Ids that must leave the served set: the ones a person marked, plus their dependents.
+def _withheld_closure(assets: Sequence[Asset]) -> frozenset[str]:
+    """Ids that must leave the served set: the ones :func:`_is_withheld` names, plus dependents.
 
     Endpoints are resolved with :func:`~governed_bi.retrieve.structure.bind_endpoint` rather
     than compared as strings, because ``left_table``/``base_table``/``parent_table`` may be any
@@ -228,9 +268,9 @@ def _excluded_closure(assets: Sequence[Asset]) -> frozenset[str]:
     ``{schema}.{physical_name}``. A string test would miss the three that are not the id and let
     the fatal problem back in.
 
-    The lookup is built over **every** table including the excluded ones, so an endpoint binds
-    to its real target and is then tested for exclusion. Binding against the survivors instead
-    would make an ambiguous bare name resolve to whichever table happened to remain.
+    The lookup is built over **every** table including the withheld ones, so an endpoint binds
+    to its real target and is then tested. Binding against the survivors instead would make an
+    ambiguous bare name resolve to whichever table happened to remain.
 
     ``scope`` reproduces structure.py's three call sites in one expression: only ``column``
     declares a ``schema`` field, so ``join`` and ``metric`` get ``None`` — which is what
@@ -243,7 +283,7 @@ def _excluded_closure(assets: Sequence[Asset]) -> frozenset[str]:
     owns ``_type_of``, and ``tools/check_one_implementation.py`` is right to refuse a second one.
     """
     lookup = table_lookup({a.id: a for a in assets if a.asset_type is AssetType.table})
-    out = {asset.id for asset in assets if _is_excluded(asset)}
+    out = {asset.id for asset in assets if _is_withheld(asset)}
     for _ in range(len(assets) + 1):
         before = len(out)
         for asset in assets:
@@ -257,7 +297,7 @@ def _excluded_closure(assets: Sequence[Asset]) -> frozenset[str]:
                 )
                 # `bound is None` means the corpus was already broken or ambiguous there.
                 # Leave it: `build_structure` reports it exactly as it does today, and
-                # inventing an exclusion would hide a curation defect behind a policy flag.
+                # inventing a withholding would hide a curation defect behind a policy flag.
                 if bound is not None and bound in out:
                     out.add(asset.id)
                     break
@@ -266,8 +306,8 @@ def _excluded_closure(assets: Sequence[Asset]) -> frozenset[str]:
     return frozenset(out)
 
 
-def _without_excluded_refs(asset: Asset, excluded: frozenset[str]) -> Asset:
-    """``asset`` with its **optional** references to excluded ids removed.
+def _without_withheld_refs(asset: Asset, withheld: frozenset[str]) -> Asset:
+    """``asset`` with its **optional** references to withheld ids removed.
 
     The collections and the one nullable binding. Dropping a member costs recall; dropping the
     whole asset would withhold text that stands on its own — a term still glosses business
@@ -277,19 +317,19 @@ def _without_excluded_refs(asset: Asset, excluded: frozenset[str]) -> Asset:
     # ``isinstance`` rather than ``asset_type`` here: ``Asset`` is a union of the eight
     # dataclasses, and narrowing is what lets ``replace`` type-check per field.
     if isinstance(asset, TableAsset):
-        columns = tuple(c for c in asset.columns if c not in excluded)
+        columns = tuple(c for c in asset.columns if c not in withheld)
         return replace(asset, columns=columns) if len(columns) != len(asset.columns) else asset
     if isinstance(asset, MetricAsset):
-        dims = tuple(d for d in asset.dimensions if d not in excluded)
+        dims = tuple(d for d in asset.dimensions if d not in withheld)
         return replace(asset, dimensions=dims) if len(dims) != len(asset.dimensions) else asset
     if isinstance(asset, TermAsset):
-        if asset.binding is not None and asset.binding.target_id in excluded:
+        if asset.binding is not None and asset.binding.target_id in withheld:
             return replace(asset, binding=None)
     return asset
 
 
 def _visible(assets: Sequence[Asset]) -> list[Asset]:
-    """``assets`` minus everything ``governance.excluded`` reaches (D6).
+    """``assets`` minus everything :func:`_is_withheld` reaches — exclusion (D6) and provenance.
 
     ``Governance.excluded`` is documented as removing an asset "from everything the analyst
     sees, in every environment", but only :func:`for_analyst` honoured it. The index was built
@@ -300,6 +340,26 @@ def _visible(assets: Sequence[Asset]) -> list[Asset]:
     still receives the **whole** list, because it needs the excluded columns' keys to make
     ``check()`` refuse SQL that names one.
 
+    **Uncertified provenance is withheld here for the same reason, since 2026-08-19.** The
+    argument above is about one disposition reaching one view and not the others, and
+    ``proposed`` had exactly that shape one axis over: ``for_analyst`` refused to let a draft
+    license a column while this function let it into the index and into the context block
+    ``serve/context.py`` renders from ``assets_by_id``, so an admin's approval gated
+    authorisation and nothing else. Two consequences of that are worth naming, because both
+    were measured before they were understood:
+
+    * **Certifying an asset could not change retrieval.** ``IndexEntry`` carries
+      id/summary/asset_type/schema_tag and no provenance, so a draft became a retrieval
+      candidate when it was *written*, not when it was approved. A refused question that failed
+      at routing could not be fixed by approving anything — the open finding that certifying a
+      term does not reliably make the original question re-route was this, not a routing
+      weight. It is also why the trust loop's fourth counter could not attribute a retrieval to
+      the approval that preceded it.
+    * **``enable_clarification_to_draft`` was not the ``operational`` knob it is declared to
+      be.** Its justification is that two runs with it on/off "answer every question
+      identically until a human acts"; with drafts visible, the turn after a draft was written
+      already differed. Withholding them here is what makes that declaration true.
+
     **Dropping an asset is not enough on its own, and the first version of this shipped that
     way.** Removing an asset leaves every reference to it dangling, and a dangling *required*
     reference is a ``fatal`` problem — so ``serve/__main__.py`` refuses to serve and
@@ -308,22 +368,28 @@ def _visible(assets: Sequence[Asset]) -> list[Asset]:
     (``TableAsset.columns`` holds derived ids), and excluding one table left every join on it
     unbindable. Withholding a decoy — the whole point of the flag — made the corpus unloadable.
 
-    So exclusion propagates two ways, split on what structure.py treats as required:
+    So withholding propagates two ways, split on what structure.py treats as required:
 
-    * a **required** reference to an excluded asset excludes the referrer too
-      (:data:`_REQUIRED_TABLE_REFS`, via :func:`_excluded_closure`);
-    * an **optional** one is pruned in place (:func:`_without_excluded_refs`).
+    * a **required** reference to a withheld asset withholds the referrer too
+      (:data:`_REQUIRED_TABLE_REFS`, via :func:`_withheld_closure`);
+    * an **optional** one is pruned in place (:func:`_without_withheld_refs`).
+
+    Provenance rides that same closure rather than adding a second pass, which matters more than
+    it looks: a ``proposed`` *table* would otherwise leave every join on it unbindable and take
+    the corpus to ``servable: false`` — the identical regression exclusion shipped with and paid
+    for. Today's drafts are terms and few-shots, which nothing requires, so the closure is
+    quiet; it is correct in advance of the case that would need it.
 
     One thing is deliberately *not* handled: a ``few_shot`` whose ``sql`` names an excluded
     table still ships, because that reference is non-fatal and pruning it would mean parsing
     SQL here. It teaches the model a query over a withheld table, which is a curation question
     rather than a loading one — worth deciding, not worth guessing at inside this function.
     """
-    if not any(_is_excluded(asset) for asset in assets):
-        return list(assets)  # the path every existing corpus takes: nothing is copied
-    excluded = _excluded_closure(assets)
+    if not any(_is_withheld(asset) for asset in assets):
+        return list(assets)  # nothing withheld: nothing is copied
+    withheld = _withheld_closure(assets)
     return [
-        _without_excluded_refs(asset, excluded) for asset in assets if asset.id not in excluded
+        _without_withheld_refs(asset, withheld) for asset in assets if asset.id not in withheld
     ]
 
 
