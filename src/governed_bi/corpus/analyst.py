@@ -91,6 +91,17 @@ def for_analyst(assets: Sequence[Asset]) -> AnalystCorpus:
     A seeded or hand-written asset with no ``audit``/``provenance`` at all is visible: absence
     of provenance is not evidence of an unreviewed draft, and treating it as one would hide
     every asset this project has ever shipped.
+
+    **Why an uncertified asset is dropped outright and gets no ``excluded_columns`` twin.** An
+    excluded column is recorded rather than dropped, because ``check()`` needs the key to bind a
+    bare name and refuse it as *excluded* instead of failing as *ambiguous* — a silent absence
+    where a governed refusal belongs. The symmetric worry does not arise here: every path that
+    can stamp ``proposed`` writes a ``TermAsset`` (``curator/clarification.py``,
+    ``curator/feedback.py``) or a ``FewShotAsset`` (``curator/mistake_memory.py``), and neither
+    contributes a column key to bind. ``restamp_model_authored`` is generic and would accept a
+    ``ColumnAsset``, so this is a fact about the callers, not the mechanism — checked by
+    enumerating every ``submit_draft`` caller on 2026-08-19. A writer that mints a proposed
+    column is the change that would need the twin, and it should add it.
     """
     visible: dict[str, Asset] = {}
     excluded_cols: set[str] = set()
