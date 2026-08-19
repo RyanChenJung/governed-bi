@@ -78,7 +78,15 @@ def test_no_tool_can_write_governance_onto_an_asset() -> None:
 
 def test_a_proposed_draft_is_invisible_to_the_analyst_but_a_certified_one_is_not() -> None:
     """The other half of the draft/approve split (corpus/drafts.py): without this, a
-    freshly-restamped `proposed` write would index and serve exactly like a certified one."""
+    freshly-restamped `proposed` write would license a column exactly like a certified one.
+
+    **Scoped to `for_analyst` deliberately.** This docstring used to say such a write "would
+    index and serve exactly like a certified one", which reaches past anything asserted here
+    and was not true: the index is built from `serve/session.py::_visible`, which does not read
+    provenance, so a proposed asset is a retrieval candidate and is rendered into the model's
+    context whatever this view decides. That half is
+    `tests/serve/test_a_proposed_asset_does_not_leave_the_index.py`.
+    """
     from governed_bi.corpus.analyst import for_analyst
     from governed_bi.corpus.schema import (
         Audit,

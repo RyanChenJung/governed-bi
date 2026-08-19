@@ -325,19 +325,28 @@ KNOB_REGISTER: tuple[Knob, ...] = (
        "the model sees, so a run with it on is not comparable to one without"),
     _k("enable_clarification_to_draft", False, Role.operational,
        "an answered (not declined) live clarification is mined into a TermAsset draft "
-       "(curator/clarification.py), written proposed and invisible until an admin "
-       "approves it. Operational, not comparability: unlike the check above, this "
-       "changes the corpus on disk between two turns of the SAME run, never what a "
-       "given turn's own answer looks like — the next turn only sees the draft if "
-       "someone certified it first, so two runs with this on/off still answer every "
-       "question identically until a human acts"),
+       "(curator/clarification.py), written proposed. **A proposed draft is NOT invisible to "
+       "the next turn.** serve/session.py::_visible filters on governance.excluded only, so a "
+       "draft reaches assets_by_id and the index, and serve/context.py renders the model's "
+       "context block from assets_by_id; corpus/analyst.py::for_analyst gates licensing, not "
+       "retrieval. This description asserted the opposite until 2026-08-19 and nothing "
+       "checked it — tests/serve/test_a_proposed_asset_does_not_leave_the_index.py is that "
+       "check, added with this correction. **So on today's code this knob is factually "
+       "comparability**: with it on, a later turn's answer can rest on a definition no admin "
+       "approved. Left declared operational deliberately rather than flipped, because role "
+       "derives comparability_keys() and config_hash_keys() is the same set, so flipping it "
+       "moves the serve config hash — and the planned _visible provenance check makes "
+       "operational correct again, so flipping now would move the hash twice for a "
+       "bookkeeping reason. 36 turns in runs/serve ran with this on: the trust-loop counts "
+       "over that ledger were measured on that population, not on a clean corpus"),
     _k("enable_mistake_memory_mining", False, Role.operational,
        "a turn whose run_query ledger shows a governance/execution failure followed by a "
        "passing attempt in the SAME turn is mined into a FewShotAsset draft "
-       "(curator/mistake_memory.py), written proposed and invisible until an admin approves "
-       "it. Operational, not comparability, for the identical reason "
-       "enable_clarification_to_draft is: this changes the corpus on disk between two turns "
-       "of the SAME run, never what a given turn's own answer looks like"),
+       "(curator/mistake_memory.py), written proposed. Carries "
+       "enable_clarification_to_draft's correction above in full, for the identical reason: "
+       "'proposed' does not withhold the draft from retrieval, so this knob is also factually "
+       "comparability on today's code and is also left declared operational rather than "
+       "flipped twice. 3 turns in runs/serve ran with this on"),
 
     # ── measurement ─────────────────────────────────────────────────────────
     _k("cache_cost_reduction_target", 0.30, Role.comparability,

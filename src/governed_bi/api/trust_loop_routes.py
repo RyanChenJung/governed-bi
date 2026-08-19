@@ -465,6 +465,17 @@ def make_trust_loop_metrics_router(session: Any, turn_log: Any) -> APIRouter:
                 if session.corpus_root is None
                 else "Every ledger this route reads was reachable; see `retrieved.method` for "
                 "the one counter whose signal is weaker than its name suggests.",
+                # A population caveat, not a defect in any counter above. Stated as a mechanism
+                # rather than a count so nothing here can go stale: the count of affected turns
+                # belongs to whoever re-measures, and `knobs_resolved` on each scanned record is
+                # where they would read it.
+                "`refusals` is not a count over a corpus of certified rules only. A `proposed` "
+                "draft is not withheld from retrieval -- `serve/session.py::_visible` filters on "
+                "`governance.excluded` and never reads provenance -- so in any window where "
+                "`enable_clarification_to_draft` or `enable_mistake_memory_mining` was on, some "
+                "turns were answered with an uncertified definition in context. Pinned by "
+                "`tests/serve/test_a_proposed_asset_does_not_leave_the_index.py`; the knob "
+                "register carries the same correction.",
             ],
         }
 
