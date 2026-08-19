@@ -196,6 +196,22 @@ def make_curation_router(session: Any) -> APIRouter:
         Writes to disk only. ``session.assets_by_id``/the index are run constants (ADR 0005) and
         do not observe this write until the corpus is reloaded — the same limitation a live
         ``run_query`` retrieval has for any other out-of-band corpus edit.
+
+        **Since 2026-08-19 that sentence is the loop's closing move, not a caching footnote, and
+        there is no reload short of a restart.** While ``_visible`` read no provenance, approval
+        changed nothing a retrieval read, so when it took effect was unobservable. Now approval
+        decides what serves: the admin's click is durable immediately and reaches an answer on the
+        next session. ``session_from_environment`` caches the session in a module global with no
+        invalidation, and ``make_graph`` freezes it twice over — ``serve/runtime.trust`` copies the
+        constants into process-wide state and ``accept_node(session)`` closes over the object that
+        mints every turn — so a running server serves the corpus it started with.
+
+        Re-calling ``trust()`` with a fresh session would be worse than the restart, not a smaller
+        version of it: it refreshes retrieval and not ``accept``, which stamps
+        ``corpus_content_hash``, so the turn would be answered over one corpus and recorded as
+        another. Pinned by
+        ``tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py``; the fix is a change
+        to that trust boundary and is asked upstream in ``docs/detentai-fork-handoff.md``.
         """
         from fastapi import HTTPException
 

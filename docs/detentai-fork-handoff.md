@@ -348,7 +348,8 @@ code. Summary, so it does not need restating here:
 
 **Verified live, today.** Refusal (names what the corpus can see instead), clarification
 (`ask_user` asks when a term is genuinely ambiguous), report (a reader can say an answer is wrong),
-approve (an admin promotes a draft without a restart), and count (`GET /trust-loop/metrics`) are
+approve (an admin promotes a draft from the product, durable the moment they click — see the
+second caveat below for when it reaches an answer), and count (`GET /trust-loop/metrics`) are
 all real, run today, not read from code.
 
 **One caveat on the funnel's numbers, and it is a merge artifact rather than a defect.** The
@@ -362,6 +363,30 @@ zero because the history lived in a gitignored directory that was never part of 
 Read the front half rather than the back when it is re-taken. `2 → 2 → 2` converts perfectly and
 means almost nothing at n=2; `50 → 2` is the finding, because 48 refusals happened with no way for
 the reader to respond — the entrances did not exist until 2026-08-16.
+
+**An approval reaches answers on the next session, not the next turn — and that needs a decision
+from you.** Approving is durable the moment an admin clicks: the file flips and every admin route
+reloads off disk. But `index`/`structure`/`assets_by_id` are run constants (ADR 0005 §2.8.2.2),
+`session_from_environment` caches the session in a module global with no invalidation, and
+`make_graph` freezes it twice — `serve/runtime.trust` copies its constants into process-wide state
+and `accept_node(session)` closes over the object that mints every turn. So a running server keeps
+serving the corpus it started with, and the loop's closing move ("the reader asks again and it
+works") currently needs a restart that neither the reader nor the admin can trigger.
+
+This was invisible until 2026-08-19, because approval changed nothing a retrieval read either way;
+`_visible` now withholds uncertified provenance, so approval decides what serves and the timing
+became observable. Pinned by
+`tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py`.
+
+**The obvious patch is worse than the restart, which is why this is a question and not a diff.**
+Re-calling `trust()` with a fresh session's constants refreshes retrieval but not `accept_node`,
+and `accept` is what stamps `corpus_content_hash` — the turn would be answered over one corpus and
+recorded as another. Making the graph read the session dynamically instead is a change to that
+trust boundary and to ADR 0005's run-constant claim, both yours. Note also that
+`measure/gates.py::_corpus_content_hash_gate` **fails** an arm whose corpus changed mid-run, so
+whatever shape this takes has to stay on the served path and off the eval path — today it does,
+because the harness (`serve/__main__.py`) builds its own session per invocation and never reads the
+cache.
 
 **Wired and never populated.** The `assumptions` field is declared, sent, parsed, and rendered —
 and nothing in the prompt or tool layer ever fills it. It sits in the goal sentence of this fork's

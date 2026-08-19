@@ -147,6 +147,17 @@ float/int knobs declare an env var — no bool knob has one). Tracked; interim m
   measured before the change was measured with uncertified definitions reachable (36 turns in
   `runs/serve` ran with `enable_clarification_to_draft` on), and the admin surfaces are
   unaffected because they read the corpus off disk (`_reload_assets`), not `assets_by_id`.
+- **An approval reaches answers on the next session, not the next turn — found 2026-08-19 as a
+  consequence of the line above.** Approving is durable the moment an admin clicks, and invisible
+  to the running engine: the corpus views are run constants (ADR 0005 §2.8.2.2),
+  `session_from_environment` caches the session in a module global with no invalidation, and
+  `make_graph` freezes it twice (`serve/runtime.trust` copies the constants process-wide;
+  `accept_node(session)` closes over the object that mints every turn). Nobody could have noticed
+  before, because approval changed nothing a retrieval read either way. The obvious patch is worse
+  than the restart: re-`trust()`ing refreshes retrieval but not `accept`, which stamps
+  `corpus_content_hash`, so the turn would be answered over one corpus and recorded as another.
+  Pinned by `tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py`; the fix is a
+  change to the trust boundary and belongs upstream.
 
 ---
 
@@ -162,6 +173,11 @@ turns.
 **Say with the caveat attached:** that the system learns from corrections. It does — and a
 correction about a count is stored as that count, recited without re-querying, and does not
 generalise to a related question. Finding 2 is the one a technical reviewer will find first.
+
+**Say with the caveat attached:** that an admin can certify a rule from the product. They can, and
+it is durable the moment they click — but the running engine keeps serving the corpus it started
+with, so the rule reaches an answer on the next session rather than the next turn. Do not
+demonstrate approve-then-re-ask in one sitting without restarting the engine between them.
 
 **Read the front half of the funnel, not the back.** 2 → 2 → 2 converts perfectly and means
 almost nothing at n=2. 50 → 2 is the real number: 48 refusals happened with no way for the
