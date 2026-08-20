@@ -20,7 +20,7 @@ derives the turn server-side; client provenance fields are ignored.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,7 @@ __all__ = [
     "record_node",
     "make_graph",
     "session_from_environment",
+    "corpus_changed",
     "SCHEMA_VAR",
     "CORPUS_DIR_VAR",
     "MODEL_VAR",
@@ -91,11 +92,78 @@ ACCESS_POLICY_VAR = "GOVERNED_BI_ACCESS_POLICY"
 
 _SESSION: Session | None = None
 
+#: Bumped by :func:`corpus_changed`; the generation :data:`_SESSION` was built at is kept beside
+#: it. Two counters rather than a digest because ``session_from_environment`` runs per request and
+#: ``corpus/hash.py`` reads every file in the tree to produce one.
+_CORPUS_GENERATION = 0
+_SESSION_GENERATION = -1
+
+
+def _install(session: Session) -> Session:
+    """Make ``session`` the one this process serves — the cache and the constants together.
+
+    **One function, because the two halves must never name different corpora.** The cached object
+    is what ``serve/accept.py`` stamps ``corpus_content_hash`` from, and
+    :func:`~governed_bi.serve.runtime.trust`'s constants are what every retrieval node reads.
+    Updating one without the other would answer over one corpus and record another, which is a
+    worse defect than the restart this replaces, not a smaller one. There is no path that sets
+    ``_SESSION`` directly.
+
+    The generation is recorded here too, for the same reason the other two are: "which session"
+    and "which corpus it was read at" are one fact, and a caller that could set one without the
+    other would make the cache either permanently stale or wrongly fresh.
+    """
+    global _SESSION, _SESSION_GENERATION
+    _SESSION = session
+    _SESSION_GENERATION = _CORPUS_GENERATION
+    trust(dict(session.configurable()["configurable"]))
+    return session
+
+
+def corpus_changed() -> None:
+    """Declare that the corpus on disk moved, so the next turn is served from a fresh read.
+
+    **A declaration, not a rebuild.** An earlier version had the certifying route rebuild the
+    session itself, which was wrong twice over: an app constructed with :func:`make_app` serves a
+    session that is not this module's, so the rebuild replaced something nobody was reading, and
+    reaching for the environment mid-request made a route that had needed no credentials build a
+    live connector — under pytest, from the developer's own ``.env``. Bumping a counter is inert:
+    the only reader is :func:`session_from_environment`, so a process that never called it never
+    rebuilds anything.
+
+    **Why the corpus needs this at all.** ``index``/``structure``/``assets_by_id`` are run
+    constants (ADR 0005 §2.8.2.2) built once, so a certified draft used to reach answers only
+    after a process restart — a restart neither the reader nor the admin can trigger, which left
+    the trust loop's closing move ("an admin approves and the reader's next question works")
+    unreachable in the product. Called by the one route that certifies
+    (``api/curation_routes.py::approve_draft_route``); every other corpus write produces a
+    ``proposed`` asset, which ``_visible`` withholds either way, so there is nothing for those to
+    invalidate.
+
+    **What this deliberately does not cover.** An out-of-band edit to the YAML on disk, which
+    nothing declares — still a restart, the limitation ``approve_draft_route`` already documented.
+    And nothing is held back for turns in flight: a turn paused on ``ask_user`` resumes inside
+    ``agent_core``, after ``assemble`` built its context block, so its retrieval is finished and
+    the hash ``accept`` stamped stays the honest one for that whole turn. Approval moves
+    ``audit.provenance.status`` and nothing a tool would return for an id the model already knows,
+    so a post-resume tool call cannot observe the swap either.
+
+    **Off the eval path by construction.** ``measure/gates.py::_corpus_content_hash_gate`` fails
+    an arm whose corpus changed mid-run; the harness (``serve/__main__.py``) builds its own
+    session per invocation and never reads this cache, so nothing measured can reach this.
+    """
+    global _CORPUS_GENERATION
+    _CORPUS_GENERATION += 1
+
 
 def session_from_environment() -> Session:
-    """Build the run's session once from the environment and reuse it."""
-    global _SESSION
-    if _SESSION is not None:
+    """Build the run's session from the environment and reuse it until the corpus moves.
+
+    Rebuilt on the first call after :func:`corpus_changed`, so an approval reaches the next turn.
+    Callers hold a thunk (``_build_app``, ``build_serve_graph``) rather than a value, or the
+    rebuild would not reach them.
+    """
+    if _SESSION is not None and _SESSION_GENERATION == _CORPUS_GENERATION:
         return _SESSION
 
     root = REPO_ROOT
@@ -165,15 +233,15 @@ def session_from_environment() -> Session:
 
     cache = _embedder_into(kwargs, credentials)
     if corpus_dir:
-        _SESSION = session_mod.from_corpus_dir(corpus_dir, schemas=[schema] if schema else None, **kwargs)
+        built = session_mod.from_corpus_dir(corpus_dir, schemas=[schema] if schema else None, **kwargs)
     else:
         seed_dir = Path(os.environ.get(SEED_DIR_VAR) or (root / "runs" / "seeded-corpus" / str(schema)))
         seed_dir.mkdir(parents=True, exist_ok=True)
-        _SESSION = session_mod.from_live_schema(str(schema), corpus_root=seed_dir, **kwargs)
+        built = session_mod.from_live_schema(str(schema), corpus_root=seed_dir, **kwargs)
     if cache is not None:
         state = "unchanged" if cache.written == 0 else f"wrote {cache.written}"
         print(f"vector cache: {cache.opened_with} hit / {len(cache)} total, {state} — {cache.uri}")
-    return _SESSION
+    return _install(built)
 
 
 def access_policy_from_environment(root: Path) -> Any:
@@ -386,7 +454,7 @@ def record_node() -> Any:
     return record
 
 
-def build_serve_graph(session: Session) -> Any:
+def build_serve_graph(session: Session | Callable[[], Session]) -> Any:
     """The served topology, compiled. **The constructor a test can call.**
 
     This is the graph ``langgraph.json`` runs: ``accept`` in front of ``guard`` (so the turn is
@@ -403,16 +471,26 @@ def build_serve_graph(session: Session) -> Any:
     the corpus out from under a run. It is process-wide state; a caller that builds two graphs
     over two sessions gets the second one's constants, and ``trust()`` with no argument clears.
 
+    **A thunk is accepted as well as a value, because the server's graph outlives its session.**
+    ``make_graph`` passes :func:`session_from_environment` itself, so an approval that calls
+    :func:`reload_session` reaches ``accept`` on the next turn; a test passes the object it built
+    and gets exactly that one. ``Session`` is a frozen dataclass and not callable, so the two
+    cases are told apart by asking. The ``trust()`` call below stays for the value form, whose
+    session never went through :func:`_install`.
+
     No checkpointer — the server supplies its own (needed for ``/threads``).
     """
-    trust(dict(session.configurable()["configurable"]))
-    return build_graph(accept=accept_node(session), record=record_node()).compile()
+    get_session: Callable[[], Session] = session if callable(session) else (lambda: session)
+    trust(dict(get_session().configurable()["configurable"]))
+    return build_graph(accept=accept_node(get_session), record=record_node()).compile()
 
 
 def make_graph() -> Any:
     """What ``langgraph.json``'s ``graphs.serve`` points at: the environment adapter."""
     _warm_imports()
-    return build_serve_graph(session_from_environment())
+    # The function, not its result: the graph the server compiles once has to keep asking, or
+    # `reload_session` would replace a session nothing reads (see `build_serve_graph`).
+    return build_serve_graph(session_from_environment)
 
 
 def _warm_imports() -> None:

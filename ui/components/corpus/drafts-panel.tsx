@@ -94,13 +94,13 @@ function DraftCard({ row, editable }: { row: DraftRow; editable: boolean }) {
     setApproving(true);
     try {
       await api.approveDraft(row.id);
-      // The timing is in the message because the admin's next move depends on it. Approval is
-      // durable now and reaches an answer on the next session: the corpus views are run constants
-      // and the engine holds the ones it started with (`approve_draft_route`'s docstring). A bare
-      // "Approved" invites approve-then-re-ask in one sitting, which does not work and reads as
-      // the approval having failed.
+      // The effect is in the message because it is the admin's reason for clicking, and because
+      // it was not true until 2026-08-19 -- the engine served the corpus it started with, so
+      // approve-then-re-ask in one sitting did nothing and read as the approval having failed.
+      // `approve_draft_route` now declares the corpus moved and the next turn is served from a
+      // fresh read.
       toast.success(`Approved ${row.id}`, {
-        description: "Saved. It reaches answers when the engine next loads the corpus.",
+        description: "In use from the next question on.",
       });
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
     } catch (err) {

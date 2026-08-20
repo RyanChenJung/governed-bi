@@ -1,4 +1,4 @@
-"""Approving a draft is durable immediately and takes effect only for the next session.
+"""Approving a draft is durable immediately; an existing ``Session`` never observes it.
 
 The trust loop's closing move is "an admin approves from the product, and the reader's next
 question works". The first half is real: ``POST /corpus/drafts/{id}/approve`` writes the file and
@@ -8,20 +8,27 @@ not be noticed, because approval changed nothing a retrieval read either way
 (``test_a_proposed_asset_leaves_the_index.py``). Now that ``_visible`` withholds uncertified
 provenance, approval *does* decide what serves — and this file is what says when.
 
-**Where it stops.** ``index``/``structure``/``assets_by_id`` are run constants built once
-(ADR 0005 §2.8.2.2), ``api/graph_app.py::session_from_environment`` caches the session in a module
-global with no invalidation, and ``api/graph_app.py::make_graph`` freezes that session twice over:
-``serve/runtime.trust`` copies its constants into process-wide state, and ``accept_node(session)``
-closes over the object that mints every turn. So a running server serves the corpus it started
-with.
+**Where it stops, and why that is by design.** ``index``/``structure``/``assets_by_id`` are run
+constants built once (ADR 0005 §2.8.2.2) on a frozen dataclass, so no write reaches an object that
+already exists. Until 2026-08-19 that was the end of it: the adapter cached one session forever and
+``make_graph`` froze it twice over — ``serve/runtime.trust`` copying its constants into process-wide
+state, and ``accept_node(session)`` closing over the object that mints every turn — so a running
+server served the corpus it started with and only a restart moved it.
 
-**Why the obvious patch is worse than the restart.** Re-calling ``trust()`` with a fresh session's
-constants would update retrieval without updating ``accept_node``, and ``accept`` is what stamps
-``corpus_content_hash`` (``serve/accept.py`` -> ``Session.turn``). The turn would then be answered
-over one corpus and recorded as another — a record naming a corpus that did not serve it, which is
-the falsifiable-provenance defect this repository keeps closing rather than a smaller version of
-the restart. Making the graph read the session dynamically is a change to that trust boundary and
-to ADR 0005's run-constant claim, so it is recorded here and asked upstream, not patched around.
+**Still true, and still worth a test, because the fix is a rebuild rather than a mutation.** As of
+2026-08-19 the server does close the loop: ``api/graph_app.py::corpus_changed`` marks the cache
+stale and the next ``session_from_environment`` installs a session read fresh off disk. What that
+change does *not* do — and must not — is make an existing ``Session`` observe a write. Every
+assertion below is a property of the object, so they hold before and after, and they are what says
+why a rebuild was the only honest option:
+``tests/api/test_a_certified_draft_reaches_the_next_turn.py`` is the server-side half.
+
+**Why a mutation would have been worse than the restart it replaced.** Refreshing retrieval without
+refreshing ``accept`` — which stamps ``corpus_content_hash`` via ``Session.turn`` — answers a turn
+over one corpus and records it as another. That is the falsifiable-provenance defect this repository
+keeps closing, not a smaller version of the restart, and it is why ``graph_app._install`` moves the
+cache, the generation and ``trust()``'s constants in one call. The third test below is the
+measurement that makes the argument checkable rather than assertable.
 """
 
 from __future__ import annotations

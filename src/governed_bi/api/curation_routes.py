@@ -193,25 +193,31 @@ def make_curation_router(session: Any) -> APIRouter:
         Request body: ``{"by": "admin@example.com"}`` (optional — recorded in ``audit.extra``,
         never required).
 
-        Writes to disk only. ``session.assets_by_id``/the index are run constants (ADR 0005) and
-        do not observe this write until the corpus is reloaded — the same limitation a live
-        ``run_query`` retrieval has for any other out-of-band corpus edit.
+        Writes to disk, then declares the corpus moved (``graph_app.corpus_changed``). The
+        write half is unchanged: ``session.assets_by_id``/the index are run constants (ADR 0005)
+        and never observe a write. What changed on 2026-08-19 is that the adapter now rebuilds on
+        its next ``session_from_environment``, so **the reader's next question is served over the
+        corpus this approval produced, with no restart.**
 
-        **Since 2026-08-19 that sentence is the loop's closing move, not a caching footnote, and
-        there is no reload short of a restart.** While ``_visible`` read no provenance, approval
-        changed nothing a retrieval read, so when it took effect was unobservable. Now approval
-        decides what serves: the admin's click is durable immediately and reaches an answer on the
-        next session. ``session_from_environment`` caches the session in a module global with no
-        invalidation, and ``make_graph`` freezes it twice over — ``serve/runtime.trust`` copies the
-        constants into process-wide state and ``accept_node(session)`` closes over the object that
-        mints every turn — so a running server serves the corpus it started with.
+        **Why this route needed to grow a second line at all.** While ``_visible`` read no
+        provenance, approval changed nothing a retrieval read, so when it took effect was
+        unobservable and "until the corpus is reloaded" was a caching footnote. Once uncertified
+        provenance was withheld, approval decided what serves and that sentence became the trust
+        loop's closing move — which nothing could reach, because the reload was a restart neither
+        the reader nor the admin can trigger.
 
-        Re-calling ``trust()`` with a fresh session would be worse than the restart, not a smaller
-        version of it: it refreshes retrieval and not ``accept``, which stamps
-        ``corpus_content_hash``, so the turn would be answered over one corpus and recorded as
-        another. Pinned by
-        ``tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py``; the fix is a change
-        to that trust boundary and is asked upstream in ``docs/detentai-fork-handoff.md``.
+        **It declares and does not rebuild, deliberately.** The first version called the rebuild
+        here: it reached for the environment and opened a live connector from a route whose whole
+        job is one file write, and it replaced a module global that an app built by ``make_app``
+        does not serve at all. Bumping a counter keeps this route what it was.
+
+        **Retrieval and the stamp move together or not at all** (``graph_app._install``), because
+        refreshing one without the other answers over one corpus and records another — worse than
+        the restart it replaces, not a smaller version of it. Still open: nothing holds the swap
+        for a turn already in flight, which is harmless by today's topology rather than guaranteed
+        by it. This **amends ADR 0005 §2.8.2.2**, whose own text carries the note, and is asked
+        upstream in ``docs/detentai-fork-handoff.md``. Pinned by
+        ``tests/api/test_a_certified_draft_reaches_the_next_turn.py``.
         """
         from fastapi import HTTPException
 
@@ -227,6 +233,15 @@ def make_curation_router(session: Any) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except DraftNotPending as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # **After the write, on the success path only, and it declares rather than acts.** A
+        # 404/409 changed no corpus, so bumping the generation would buy a rebuild that serves
+        # what it already had. `corpus_changed` only increments a counter, so this route stays
+        # what it was -- no credentials, no I/O beyond the write above -- and the rebuild happens
+        # in the adapter, on the first `session_from_environment` after this. Imported inside the
+        # function because `api/routes.py` imports this module and the adapter reaches that one.
+        from governed_bi.api.graph_app import corpus_changed
+
+        corpus_changed()
         return {
             "id": certified.id,
             "asset_type": certified.asset_type.value,

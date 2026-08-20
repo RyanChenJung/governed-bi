@@ -28,13 +28,27 @@ from governed_bi.serve.state import PER_TURN_RESET
 __all__ = ["accept_node"]
 
 
-def accept_node(session: Any) -> Callable[[dict, Any], dict]:
-    """The ``accept`` node for ``session``.
+def accept_node(get_session: Callable[[], Any]) -> Callable[[dict, Any], dict]:
+    """The ``accept`` node for whichever session ``get_session`` returns **when a turn starts**.
 
     Returned rather than declared, because the session is a live object graph — policy,
     connector, index, models — and LangGraph Server can only put JSON on
     ``config["configurable"]``. Closing over it here is the same move ADR 0007 §1 makes for the
     graph factory, one level down.
+
+    **A thunk rather than the object, since 2026-08-19, so the stamp cannot outlive the corpus
+    it names.** An admin approving a draft changes what serves
+    (``serve/session.py::_visible``), and ``api/graph_app.py`` installs the rebuilt session and
+    re-declares :func:`~governed_bi.serve.runtime.trust`'s constants in one call. Had this node
+    kept the original object, retrieval would have moved to the new corpus while
+    ``Session.turn`` went on stamping the old ``corpus_content_hash`` — a turn answered over one
+    corpus and recorded as another, which is worse than the restart it replaced rather than a
+    smaller version of it. Read late, both come from the same install.
+
+    Read at the **start of a turn** and deliberately not per node: a turn paused on ``ask_user``
+    resumes inside ``agent_core``, after ``assemble`` has already built the context block, so its
+    retrieval is finished and the hash this node stamped stays the honest one for the whole turn
+    even if an approval lands mid-clarification.
     """
 
     def accept(state: dict, config: Any) -> dict:
@@ -65,6 +79,10 @@ def accept_node(session: Any) -> Callable[[dict, Any], dict]:
         # drivers build their own turns and this node is not on their path — and `Session.turn`
         # omits the key rather than storing a null, so absence keeps failing closed.
         caller = caller_identity(config)
+        # After the no-question return above, so a malformed turn does not pay for a rebuild it
+        # will not use, and once per turn rather than once per read so the two uses below cannot
+        # land on either side of an install.
+        session = get_session()
         turn = session.turn(
             question,
             turn_index=max(1, prior),

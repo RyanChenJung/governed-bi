@@ -2,8 +2,17 @@
 
 **What this is.** A handoff, not a request. It records why this fork exists, what it was built
 against, exactly which parts of the engine it touches and why, and the one piece of debt it owes
-you. Nothing in this document needs an answer from you — where this fork had to choose between
-two legitimate designs, the choice made and its evidence are stated below rather than asked about.
+you. Where this fork had to choose between two legitimate designs, the choice made and its evidence
+are stated below rather than asked about.
+
+> **One exception, added 2026-08-19, and it is the only thing here that needs a ruling from you.**
+> This fork **amended ADR 0005 §2.8.2.2** on the served path: a `Session` is still built once and
+> still frozen, but "once" now means once per corpus rather than once per process, so an admin's
+> approval reaches the reader's next turn instead of the next restart. Three files
+> (`api/graph_app.py`, `serve/accept.py`, `api/curation_routes.py`), and the ADR carries the same
+> note at the section it amends. Jump to
+> [**An approval now reaches the next turn**](#an-approval-now-reaches-the-next-turn-we-changed-your-seam-to-do-it--please-rule-on-it).
+> Everything else in this fork sits beside your decisions rather than changing them.
 
 **Why this file lives flat in `docs/`, not `docs/adr/`.** Same reason as
 [`docs/detentai-role-tiers-and-clarification-cancel.md`](detentai-role-tiers-and-clarification-cancel.md):
@@ -348,9 +357,9 @@ code. Summary, so it does not need restating here:
 
 **Verified live, today.** Refusal (names what the corpus can see instead), clarification
 (`ask_user` asks when a term is genuinely ambiguous), report (a reader can say an answer is wrong),
-approve (an admin promotes a draft from the product, durable the moment they click — see the
-second caveat below for when it reaches an answer), and count (`GET /trust-loop/metrics`) are
-all real, run today, not read from code.
+approve (an admin promotes a draft from the product; since 2026-08-19 it reaches the next turn
+rather than the next process — see the section below, which amends a decision of yours), and
+count (`GET /trust-loop/metrics`) are all real, run today, not read from code.
 
 **One caveat on the funnel's numbers, and it is a merge artifact rather than a defect.** The
 figures that measurement produced — **50 refusals → 2 reader entrances → 2 approved rules → 2
@@ -364,29 +373,56 @@ Read the front half rather than the back when it is re-taken. `2 → 2 → 2` co
 means almost nothing at n=2; `50 → 2` is the finding, because 48 refusals happened with no way for
 the reader to respond — the entrances did not exist until 2026-08-16.
 
-**An approval reaches answers on the next session, not the next turn — and that needs a decision
-from you.** Approving is durable the moment an admin clicks: the file flips and every admin route
-reloads off disk. But `index`/`structure`/`assets_by_id` are run constants (ADR 0005 §2.8.2.2),
-`session_from_environment` caches the session in a module global with no invalidation, and
-`make_graph` freezes it twice — `serve/runtime.trust` copies its constants into process-wide state
-and `accept_node(session)` closes over the object that mints every turn. So a running server keeps
-serving the corpus it started with, and the loop's closing move ("the reader asks again and it
-works") currently needs a restart that neither the reader nor the admin can trigger.
+### An approval now reaches the next turn. **We changed your seam to do it — please rule on it.**
 
-This was invisible until 2026-08-19, because approval changed nothing a retrieval read either way;
-`_visible` now withholds uncertified provenance, so approval decides what serves and the timing
-became observable. Pinned by
-`tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py`.
+**Read this one even if you skim the rest.** It is the only change in this fork that amends a
+decision of yours rather than adding beside it, and ADR 0005 §2.8.2.2 carries the same note.
 
-**The obvious patch is worse than the restart, which is why this is a question and not a diff.**
-Re-calling `trust()` with a fresh session's constants refreshes retrieval but not `accept_node`,
-and `accept` is what stamps `corpus_content_hash` — the turn would be answered over one corpus and
-recorded as another. Making the graph read the session dynamically instead is a change to that
-trust boundary and to ADR 0005's run-constant claim, both yours. Note also that
-`measure/gates.py::_corpus_content_hash_gate` **fails** an arm whose corpus changed mid-run, so
-whatever shape this takes has to stay on the served path and off the eval path — today it does,
-because the harness (`serve/__main__.py`) builds its own session per invocation and never reads the
-cache.
+**What was wrong.** Approving was durable the moment an admin clicked and invisible to the running
+engine. `index`/`structure`/`assets_by_id` are run constants (ADR 0005 §2.8.2.2),
+`session_from_environment` cached the session in a module global with no invalidation, and
+`make_graph` froze it twice — `trust()` copied its constants into process-wide state and
+`accept_node(session)` closed over the object that mints every turn. So the loop's closing move
+("the reader asks again and it works") needed a restart that neither the reader nor the admin can
+trigger. It was invisible until 2026-08-19, because approval changed nothing a retrieval read
+either way; once `_visible` withheld uncertified provenance, approval decided what serves and the
+timing became observable.
+
+**What we changed — three files, and the shape matters more than the size.**
+
+| file | change |
+|---|---|
+| `api/graph_app.py` | `_install` sets the cache, the generation and `trust()`'s constants in **one** call; `corpus_changed()` bumps a counter; `session_from_environment` rebuilds when the counter moved |
+| `serve/accept.py` | takes a thunk, so `Session.turn` stamps the corpus that served the turn, not the one the graph was compiled over |
+| `api/curation_routes.py` | the certifying route calls `corpus_changed()` — a declaration, no I/O, no credentials |
+
+**The half-fix we rejected, because it is worse than the restart.** Refreshing retrieval without
+the stamp answers over one corpus and records another. That is why `_install` exists and why
+`accept` reads late: there is no path that moves one without the others.
+
+**And one we tried and backed out.** The first version had the route rebuild the session directly.
+Under pytest that read the developer's own `.env` and opened a live Postgres connector from a route
+whose whole job is one file write — and it rebuilt a module global that an app built by `make_app`
+does not even serve. `corpus_changed()` is inert by comparison: its only reader is the adapter.
+
+**What we could not close, and the reason this is a request for a ruling.** Nothing holds the swap
+for turns in flight. It is harmless *by today's topology*: a turn paused on `ask_user` resumes
+inside `agent_core`, after `assemble` built its context block, so its retrieval is finished; and
+certification moves only `audit.provenance.status`, which no tool returns for an id the model
+already knows. Both are properties of the current graph, not guarantees — an approval that changed
+asset *content*, or a resume that re-entered retrieval, would break the reasoning. If you want
+`Session` to stay per-process, say so and we will revert to an explicit operator reload instead.
+
+**Deliberately left alone:** an out-of-band edit to the YAML on disk still needs a restart
+(nothing declares it, and a digest costs a read of every file per request); and the eval path is
+untouched, because `serve/__main__.py` builds its own session per invocation and never reads the
+cache. That boundary is load-bearing —
+`measure/gates.py::_corpus_content_hash_gate` **fails** an arm whose corpus changed mid-run.
+
+**Tests:** `tests/api/test_a_certified_draft_reaches_the_next_turn.py` (the fix, five cases
+including "the route builds nothing") and
+`tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py` (why a rebuild is needed at
+all, as a property of a `Session`).
 
 **Wired and never populated.** The `assumptions` field is declared, sent, parsed, and rendered —
 and nothing in the prompt or tool layer ever fills it. It sits in the goal sentence of this fork's

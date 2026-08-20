@@ -358,7 +358,7 @@ def _served() -> Any:
     assert not session.fatal_problems, [str(p) for p in session.fatal_problems]
     trust(dict(session.configurable()["configurable"]))
     return as_sync(
-        build_graph(accept=accept_node(session), record=record_node())
+        build_graph(accept=accept_node(lambda: session), record=record_node())
         .compile(checkpointer=InMemorySaver())
     )
 

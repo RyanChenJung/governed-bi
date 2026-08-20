@@ -212,7 +212,7 @@ def test_the_accept_node_stores_the_transport_authenticated_caller() -> None:
         policy=GovernancePolicy(guard_rules_enabled={}), corpus_content_hash="c",
         prompt_set_hash="p", knobs_resolved={}, db_id="d", run_id="r",
     )
-    accept = accept_node(session)
+    accept = accept_node(lambda: session)
     message = [{"type": "human", "content": "revenue?"}]
 
     named = accept(

@@ -1038,6 +1038,33 @@ clause is still needed in the prompt, so it stays indexed for completion.
 
 ##### 2.8.2.2 Resolved: the session is where the corpus enters the process
 
+> **Amended on the served path (2026-08-19) by this fork — needs your ruling.** "Built once" now
+> means "built once per corpus, not once per process". An admin certifying a draft declares the
+> change (`api/graph_app.py::corpus_changed`) and the next `session_from_environment` rebuilds, so
+> a `Session` is still frozen and every turn still reads one — but two turns of one *process* can
+> now name different corpora, deliberately, because that is the trust loop closing.
+>
+> **The seam this section draws is unchanged and is what made the amendment safe.** The three
+> readers move together in one function (`_install`: the cache, the generation, and
+> `serve/runtime.trust`'s constants), and `accept` takes a thunk so `Session.turn` stamps the
+> corpus that served the turn rather than the one the graph was compiled over. Refreshing
+> retrieval without the stamp was the tempting half-fix and is a worse defect than the restart it
+> replaces — a turn answered over one corpus and recorded as another.
+>
+> **What we could not close, and why it is yours.** Nothing holds the swap for turns in flight. It
+> is harmless today by the topology: a turn paused on `ask_user` resumes inside `agent_core`, after
+> `assemble` has built its context block, so its retrieval is finished; and certification moves
+> only `audit.provenance.status`, which no tool returns. Both are properties of today's graph, not
+> guarantees — an approval that changed asset *content*, or a resume that re-entered retrieval,
+> would break the reasoning. Deciding whether "run constant" should mean per-process or per-corpus
+> is your call, and `measure/gates.py::_corpus_content_hash_gate` is the reason it matters: it
+> fails an arm whose corpus changed mid-run, and today only `serve/__main__.py` (one session per
+> invocation, never this cache) is on the measured path.
+>
+> Pinned by `tests/api/test_a_certified_draft_reaches_the_next_turn.py` and
+> `tests/serve/test_a_proposed_asset_leaves_the_index.py`. Full account in
+> `docs/detentai-fork-handoff.md`.
+
 *Opened 2026-08-03 as the text below; resolved the same day. The original statement of
 the gap is kept because it is the evidence for the seam chosen here.*
 
