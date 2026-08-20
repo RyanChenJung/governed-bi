@@ -36,10 +36,11 @@ no margin left for a route this size.
 **How a raised item is traced back to a thread.** Neither ledger stores ``thread_id`` directly.
 Both store ``turn_id`` -- ``curator/feedback.py::FeedbackRecord.turn_id`` (required, always
 present) and ``curator/clarifications.py::ClarificationRecord.turn_id`` (task B-0, optional,
-present only on a refusal-clarification filed after B-0 shipped) -- and the turn log
-(``api/trace_store.py``) is the one place that already maps a ``turn_id`` to the ``thread_id``
-it was served on. So this route reads both ledgers, looks each candidate row's ``turn_id`` up in
-the turn log, and keeps only the rows whose turn belongs to the requested thread. A
+present only on a refusal-clarification filed after B-0 shipped) -- and the conversation store
+(``api/thread_turns.py``; ``api/trace_store.py`` until ADR 0014 deleted it on 2026-08-18) is the
+one place that already maps a ``turn_id`` to the ``thread_id`` it was served on. So this route
+reads both ledgers, looks each candidate row's ``turn_id`` up in the turn log, and keeps only the
+rows whose turn belongs to the requested thread. A
 refusal-clarification with no ``turn_id`` (it predates B-0) is silently excluded -- not a
 different failure mode than "raised on a different thread", because this route has no way to
 tell the two apart, and reporting a guess would be exactly the "field the engine does not
@@ -127,9 +128,9 @@ def make_raised_router(session: Any, turn_log: Any) -> APIRouter:
     other curation-family router needs only the session; this is the first to also need the turn
     log ``api/routes.py::_build_app`` already threads through as its own third dependency
     (``turn_log.get_turn``/``.list_turns``, the same seam ``/audit/turns`` reads). Importing
-    ``governed_bi.api.trace_store`` directly here would have worked too -- its module-level
-    ``TURN_LOG_DIR`` is read fresh on every call, so a test's ``monkeypatch.setattr(trace_store,
-    "TURN_LOG_DIR", ...)`` would still take effect even without this parameter -- but it would
+    the reader module directly here would have worked too -- ``TURN_LOG_DIR`` is a property read
+    fresh on every call, so a test that patches it would still take effect even without this
+    parameter -- but it would
     quietly drop the swappable-``turn_log`` seam ``make_app``'s own docstring describes ("anything
     exposing ``append_turn``, ``list_turns``, ``get_turn``..."). Taking it as a parameter, the way
     every other reader of the turn log in this codebase already does, keeps that seam real rather
@@ -215,12 +216,16 @@ def make_raised_router(session: Any, turn_log: Any) -> APIRouter:
 
 def _refusal_counts(turn_log: Any, *, db_id: str, limit: int) -> dict[str, Any]:
     """Turn-log counter 1: refusals, by reason -- ``outcome == "refused"`` rows, grouped on
-    ``terminal_reason``. Cheap: both fields (plus ``db_id``) are in ``trace_store.
-    SUMMARY_FIELDS``, so this reads only ``list_turns``, never ``get_turn``.
+    ``terminal_reason``. Cheap: both fields (plus ``db_id``) are in the reader's
+    ``SUMMARY_FIELDS``, so this reads only ``list_turns``, never ``get_turn``.
 
-    **Scoped to ``db_id``.** ``runs/serve/`` is one process-wide log shared across every session
-    this repo has ever run a server against -- confirmed live: 156 ``beer_factory`` turns, 61
-    ``app_store``, a handful of others, all in the one log this route reads. Counting every
+    **Scoped to ``db_id``.** The store is process-wide, shared across every session this repo has
+    ever run a server against. Measured on ``runs/serve/*.jsonl`` while that was the store: 156
+    ``beer_factory`` turns, 72 ``app_store``, a handful of others, in one log. **ADR 0014 replaced
+    that store on 2026-08-18** (``api/trace_store.py`` and ``runs/serve/`` are deleted; the reader
+    is ``api/thread_turns.py`` over LangGraph thread state), so those figures describe the
+    population the published funnel was taken from and **not** what this counter reads today --
+    re-measure before quoting it. The scoping argument is unchanged either way. Counting every
     turn regardless of ``db_id`` would answer "how many refusals has this *log file* ever seen",
     not "how many has *this session's loop* seen" -- a different question, and the wrong one for
     a route whose other three counters (the ledgers, the corpus) are already scoped to this one
@@ -415,8 +420,9 @@ def make_trust_loop_metrics_router(session: Any, turn_log: Any) -> APIRouter:
     entrance → approved rule → retrieved again -- actually turn, and where does it stop.
 
     **Read-only over ledgers that already exist.** No new write path, no new engine field: every
-    number below is a projection of ``trace_store``'s turn log, ``clarifications.jsonl``,
-    ``feedback.jsonl`` and the corpus's own ``audit.extra["source"]`` (task C-0). If a future
+    number below is a projection of the conversation store (``api/thread_turns.py``),
+    ``clarifications.jsonl``, ``feedback.jsonl`` and the corpus's own ``audit.extra["source"]``
+    (task C-0). If a future
     change to this route ever needs to add a field to the served record to answer a question, that
     is the sign the audit behind this task was wrong, and the route should stop rather than grow
     one.
