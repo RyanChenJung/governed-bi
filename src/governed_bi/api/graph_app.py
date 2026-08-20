@@ -446,6 +446,12 @@ def record_node() -> Any:
                     else record_dict.get("outcome")
                 ),
                 "record": dict(record_dict),
+                # Read off the answer rather than recomputed, the same discipline `answer_text`
+                # follows two lines up: `stamp` already resolved this and a second derivation
+                # here is how the audit list and the answer card came to disagree once before.
+                # `list(... or [])` because the envelope promises a list and an older answer
+                # payload predates the key.
+                "assumptions": list(answer.get("assumptions") or []),
             }
         except Exception:  # noqa: BLE001 — a turn that answered is not a turn that failed
             return {}

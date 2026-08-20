@@ -227,6 +227,21 @@ class TurnEntry(TypedDict, total=False):
     outcome: str | None
     record: dict[str, Any]
 
+    #: The model's own self-reported assumptions for this turn (``serve/tools.py::
+    #: state_assumption``), as ``stamp`` put them on the answer. **A sixth key, and the reason it
+    #: is on the envelope is ``answer_text``'s reason** — ``stamp`` keeps it off ``record``
+    #: deliberately (ADR 0006 §11: what the turn's answer *says*, not a durable measured field),
+    #: so merging it in would fail ``undeclared_keys`` on every read back out.
+    #:
+    #: **Added 2026-08-19 because the claim it carries was unmeasurable.** "each with its
+    #: assumptions shown" is the goal sentence of both customer action plans and appears eight
+    #: times across them; the field was declared, sent, parsed and rendered, and nothing durable
+    #: recorded whether it ever arrived. Across 240 logged turns there was no way to tell an
+    #: answer that stated no assumptions from one that was never asked to — which is the
+    #: "absence the checker produced, read as an absence in the world" defect this project keeps
+    #: filing. Always a list, never null, so "none stated" is a reading rather than a gap.
+    assumptions: list[str]
+
     #: What :func:`compact_turn_record` replaced on this row, ``{"dropped": [...], "was_bytes": n}``.
     #: Present on **every** archived row and absent only on the newest, so ``{"dropped": []}`` is a
     #: statement ("archived, nothing trimmed") and not a missing field. Lives on the envelope and
