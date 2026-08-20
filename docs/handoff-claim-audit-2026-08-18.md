@@ -112,15 +112,23 @@ should demo or measure on.
 degraded system.** Check whether the arms and the published numbers set this variable before
 comparing them to anything.
 
-## Finding 4 — the loop's core switch is off by default and does not survive a restart
+## Finding 4 — the loop's core switch is off by default (and the restart half was wrong)
 
-`enable_clarification_to_draft` defaults to `false`, and `POST /settings/toggles` stores the
-override **in-process only**. So every fresh engine start has the loop's write path disabled,
-and with it off, answering a clarification records the answer and produces **no draft, with no
-error**. It reads as broken when it is only switched off. Two persistence paths exist and
-neither works for this knob (`governed_bi.local.toml` "is read by nothing"; only three
-float/int knobs declare an env var — no bool knob has one). Tracked; interim mitigation is
-`DetentAI/demo/preflight.sh`, which sets it and prints READY / NOT READY.
+`enable_clarification_to_draft` defaults to `false`, and with it off, answering a clarification
+records the answer and produces **no draft, with no error**. It reads as broken when it is only
+switched off. Two persistence paths are genuinely dead for this knob
+(`governed_bi.local.toml` "is read by nothing"; only three float/int knobs declare an env var — no
+bool knob has one). Mitigation is `DetentAI/demo/preflight.sh`, which sets it and prints READY /
+NOT READY.
+
+> **Corrected 2026-08-19.** This finding was titled "does not survive a restart" and said the
+> override was held **in-process only**. That is false and was false when written.
+> `serve/runtime_overrides.py::set_override` writes `runs/runtime-overrides.json`, `overrides()`
+> reads it back after the process cache is cleared, `true` and `false` both round-trip, and
+> `test_an_override_survives_a_reload` has guarded it since the commit that added the toggles on
+> 2026-08-15. What is true is narrower: the file is under `runs/`, which is gitignored, so a clean
+> clone or a cleaned `runs/` starts with the switch off. The audit method here was "run it live and
+> read the durable log" — this row was the one inferred from code instead, and inferred wrong.
 
 ## Finding 5 — two counters and one path are weaker than their names
 
