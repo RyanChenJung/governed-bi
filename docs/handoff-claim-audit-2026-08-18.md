@@ -227,6 +227,94 @@ further here.
 
 ---
 
+## Re-measured 2026-08-20, on live traffic, with questions that force an assumption
+
+21 live turns, `app_store` on the BIRD sandbox, `gpt-5.6-luna`. Full method, raw artifacts and the
+rejected treatment: `~/Antigravity/experiments/010_stated-assumptions-channel/`. **n is 4 per cell
+on the discriminating question** — mechanisms, not rates.
+
+**Finding 1's zero was measured on the wrong question, and Finding 1's advice is now out of date.**
+The 2026-08-19 reading was taken on *"How many rows are in the playstore table?"* — a question with
+no unstated choice in it. An instrument reading zero where there is nothing to state measures
+nothing, which is this project's own recurring defect showing up inside its checker. Re-measured on
+questions profiled from the data for choices an answer cannot avoid, `state_assumption` fires on
+**12 of 21 turns**, and what it writes is usable:
+
+> *"I treated each install figure with a plus sign as its numeric lower bound (for example,
+> '10,000+' as 10,000), so the result is a minimum total rather than an exact count."*
+
+So the honest sentence changed. Not *"the field is wired and empty"* — it is **wired, live, and
+uneven**. On the question whose ambiguity is knowable from the schema alone (`AVG` over a column
+that is NULL on 1,474 of 10,840 rows) the tool fired on **1 of 4** turns and the caveat reached the
+reader in any form on **2 of 4**. On the question whose ambiguity only appears after
+`inspect_schema` and `sample_rows` it fired **2 of 2**. The pattern is discovery: the model that
+had to go looking declares what it found; the model that already knew mostly stays quiet.
+
+**A prompt rule was written against that and measured, and it failed.** One paragraph telling the
+agent that the closing prose and `state_assumption` are not alternatives, with a worked example in
+an unrelated domain, registered as a runtime variant so `prompt_set_hash` moved (`d0e306f170ab` →
+`86d6f700853e`). Tool-call rate 1/4 → 1/4, and the prose caveat the reader *was* getting dropped
+from 2/4 to 1/4. **Nothing was committed to `register/prompts.py`** beyond a note saying this was
+tried. Recorded because the alternative — editing the prompt and assuming it worked — is how a
+treatment gets credited for nothing, and this is what that would have looked like from the inside.
+
+**Finding 2 is worse than written here, in a way the record cannot show.** Finding 2a says the
+count is recited with `no_sql` and `generated_sql: None`, which is true and is **detectable** — the
+business-tier stamp says *"answered without consulting your data at all"*. Across 8 turns of that
+question there is a second, undetectable variant:
+
+| recorded `generated_sql` | that SQL returns | answer reported | |
+|---|---|---|---|
+| none (`no_sql`) | — | **8,512** | as Finding 2a, and visible on the stamp |
+| `COUNT(*)` | **10,840** | **8,512** | **contradicts its own record** |
+| `COUNT(DISTINCT app_name)` | **9,659** | **10,840** | record does not support the answer |
+
+**3 of 8 turns publish a number the recorded SQL does not produce.** The second row is the one to
+worry about: `generated_sql` is present, the attempt ledger is non-empty, the stamp reports a real
+query, and the bold number beside it came from the corpus instead. Every audit surface reads clean.
+
+**And the certified rule behind it cannot be executed at all.** The 8/16 correction reads *"Active
+listing count is 8,512 -- exclude apps flagged delisted=true."* There is no `delisted` column —
+nor `active`, `status`, or any `%remov%` match anywhere in `app_store`, checked against
+`information_schema.columns`. So the only actionable part of a certified rule is its constant, and
+the agent resolves that two opposite ways on the same corpus:
+
+* **3 of 8** — *"I counted every row in the mobile app market listing because no delisted-status
+  field is available in the table."* It checked, found nothing, and declined the certified rule.
+* **1 of 8** — *"I treated 'apps in the listing' as the active listing count and excluded apps
+  marked as delisted."* No such filter is in the SQL. There is no SQL.
+
+That second line is the cost of shipping Finding 1: **a wrong answer with an assumption attached
+reads as more trustworthy than a wrong answer without one.** The feature that makes a good answer
+auditable also launders a bad one, and nothing today distinguishes the two.
+
+`corpus/validate.py` cannot catch this as written — *"No `body` rule (I2)"* is its own stated
+design. The check that would is the mirror of `serve/schema_term_guard.py`: that one forbids schema
+identifiers in text addressed to a user, this needs identifiers *asserted by* a corpus asset to
+resolve against the schema it is scoped to. **Not built.** It is a new gate class and a ruling, not
+a bug fix, and Finding 2's own closing sentence already named the distinction it turns on — rules
+that state a filter generalise, rules that state a result do not, and *rules that state a filter
+over a column that does not exist* are a third case nobody has priced.
+
+One caveat on blame: the 8,512 row is seeded demo data authored here on 2026-08-16, not a
+customer's admin. Nobody broke anything. What is real is that the write path accepts, certifies and
+serves an unexecutable correction, and would do the same for any admin who writes one the way a
+human naturally writes one.
+
+**Finding 3's own example question no longer answers, and it is not a regression.** *"What is the
+average rating of apps?"* — the question Finding 3 quotes, and the demo's opening — now interrupts
+with a clarification **4 of 4** times, asking which of the two rating tables (`playstore`,
+`mobile_app_market`, the obfuscation benchmark's decoy twin) is meant. `basis:
+data_definition`, three grounded choices, correct behaviour. The 2026-08-19 provenance change was
+the obvious suspect, since it withheld six uncertified terms and one of them is precisely the
+disambiguator (*"playstore.Type is authoritative; mobile_app_market.distribution_type is a legacy
+copy"*). **Disproved by counterfactual:** all six flipped to `certified` in a corpus copy, 44
+assets visible, same question, still interrupted 3/3. Corroborated by the 2026-08-19 thread store,
+where that question's `answer_text` channel is null. Those six drafts are real human answers that
+were simply never approved — approving them is what the product's own workflow is for.
+
+---
+
 ## What to say when handing this over
 
 **Say:** it refuses rather than guessing, and says so in plain language naming what it can see;
@@ -234,11 +322,14 @@ a reader can report a wrong answer; an admin can turn that into a certified rule
 product; the loop is counted end to end, and the count is currently 50 → 2 → 2 → 2 on real
 turns.
 
-**Do not say:** that answers show their assumptions. The field is wired and empty.
+**Do not say:** that answers show their assumptions *reliably*. Since 2026-08-20 the field is wired and live — it fired on 12 of 21 measured turns — but on the question whose assumption is knowable from the schema alone it fired 1 in 4. The honest sentence is that it states them when it had to go looking to find them.
 
 **Say with the caveat attached:** that the system learns from corrections. It does — and a
 correction about a count is stored as that count, recited without re-querying, and does not
-generalise to a related question. Finding 2 is the one a technical reviewer will find first.
+generalise to a related question. Finding 2 is the one a technical reviewer will find first,
+and as of 2026-08-20 it is worse than it reads here: on 3 of 8 turns the number in the answer
+is not the number the recorded SQL produces, and on one of those a real query sits on the
+record contradicting it. Do not claim `generated_sql` proves the answer was computed.
 
 **Say plainly, since 2026-08-19:** that an admin can certify a rule from the product and the next
 question uses it. That is now true in one process — it needed a restart until that date, which is

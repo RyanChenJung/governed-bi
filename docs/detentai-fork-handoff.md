@@ -424,16 +424,46 @@ including "the route builds nothing") and
 `tests/serve/test_approving_a_draft_does_not_reach_a_live_session.py` (why a rebuild is needed at
 all, as a property of a `Session`).
 
-**Wired and never populated.** The `assumptions` field is declared, sent, parsed, and rendered —
-and nothing in the prompt or tool layer ever fills it. It sits in the goal sentence of this fork's
-own product pitch, and today the pitch does not hold.
+**Wired, live, and uneven — corrected 2026-08-20.** This section previously said the `assumptions`
+field was declared, sent, parsed, rendered and *never populated*. That was measured on a question
+with nothing to assume (*"How many rows are in the playstore table?"*), which is a reading of the
+instrument and not of the engine. Re-measured on questions profiled from the data for choices an
+answer cannot avoid, `state_assumption` fires on 12 of 21 live turns and writes something a reader
+can act on. What is uneven is *which* ambiguities it declares: on one whose ambiguity is knowable
+from the schema alone (`AVG` over a column NULL on 1,474 of 10,840 rows) it fired 1 of 4 turns, and
+on one only visible after `inspect_schema` and `sample_rows` it fired 2 of 2. A prompt rule written
+against that gap was measured and rejected — `register/prompts.py`'s `ANALYST` `why` block records
+why there is no v11, and the artifacts are in
+`~/Antigravity/experiments/010_stated-assumptions-channel/`.
 
-**A certified rule is recited, not recomputed.** A correction taught the corpus a count ("8,512
-active apps, excluding delisted") once; re-asking now returns that literal number with
-`terminal: no_sql` and an empty attempt ledger — it never re-queries. That is honest at the
-business-tier stamp ("answered without consulting your data at all") but wrong in the answer's own
-prose if it's read on its own, and it does not generalise: the same exclusion rule was not applied
-to a related aggregate question.
+**A certified rule is recited, not recomputed — and as of 2026-08-20 that is the *detectable*
+half.** A correction taught the corpus a count ("8,512 active apps, excluding delisted") once;
+re-asking returns that literal number with `terminal: no_sql` and an empty attempt ledger. That
+much is honest at the business-tier stamp ("answered without consulting your data at all") and it
+does not generalise — the same exclusion was not applied to a related aggregate.
+
+**The half that needs your ruling: `generated_sql` does not prove the answer was computed.** Over 8
+live turns of that question, **3 published a number the recorded SQL does not produce** — and on
+one of them `generated_sql` was `COUNT(*)` (10,840) while the answer said 8,512. A real query on
+the record, a non-empty ledger, a stamp reporting a data-backed answer, and a number from the
+corpus. Every audit surface reads clean. `no_sql` is catchable; this is not.
+
+Underneath it, a corpus-integrity gap that is yours to rule on because `corpus/validate.py` states
+the position deliberately (*"No `body` rule (I2)"*). The certified correction reads *"exclude apps
+flagged delisted=true"* and **there is no `delisted` column** — nor `active`, `status`, nor any
+`%remov%` match in `app_store`, checked against `information_schema.columns`. So the only
+executable part of a certified rule is its constant. The agent resolves that both ways on the same
+corpus: 3 of 8 turns declined the rule and said why (*"no delisted-status field is available in the
+table"*), and 1 of 8 asserted the filter it never applied. The second is the expensive one, because
+it arrives *through* `state_assumption` — **the feature that makes a good answer auditable also
+launders a bad one.**
+
+The check that would catch it is the mirror of `serve/schema_term_guard.py`: that one forbids schema
+identifiers in text addressed to a user; this needs identifiers *asserted by* a corpus asset to
+resolve against the schema it is scoped to. **Not built here** — it is a new gate class against a
+design position you wrote down, so it is a ruling, not a patch. The 8,512 row is our own seeded
+demo data, so nothing of yours is broken; what the measurement shows is that the write path will
+certify and serve any correction a human writes the way humans write them.
 
 **One correction to this fork's own earlier design intent, made here rather than left stale.**
 Earlier working notes described the write-back path as togglable between "auto-certify" and
