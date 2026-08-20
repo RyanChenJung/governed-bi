@@ -169,6 +169,64 @@ NOT READY.
 
 ---
 
+## Re-measured 2026-08-19, on the live engine, after the visibility and reload changes
+
+Method as above: engine up on `app_store` (BIRD sandbox, `localhost:5435`), real questions, read
+the durable envelope rather than inferring. Three calls, so **n is 3** — this tests mechanisms, not
+rates, and nothing below is a proportion.
+
+**The corpus the engine serves went 44 → 38 assets.** `serve/session.py::_visible` now withholds
+uncertified provenance, and six clarification-derived terms were `proposed`. Confirmed against the
+running engine: `GET /corpus/assets` returns 38, and the certified `trending` term is present.
+
+**Finding 5's "refusal → re-ask" row is resolved, with the attribution stated.** `Which apps are
+trending right now?` was refused three times on 2026-08-17 between 00:06:53 and 00:08:20 — all
+`no_schema_matched` — and the clarification ledger shows the reader answered that exact question in
+the same window (`answered_by: user`, `converted_to_corpus: true`). So the reader explained
+themselves and the identical phrasing refused twice more inside 90 seconds. Asked again today:
+
+| | 2026-08-17 | 2026-08-19 |
+|---|---|---|
+| `outcome` | `refused` | `no_sql` |
+| `terminal_reason` | `no_schema_matched` | — |
+| `schemas` | (none) | `['app_store']` |
+
+and the answer applies the reader's own definition: *"…no review dates, historical snapshots, or
+growth field, so **30-day review growth** cannot be computed or reported."* "30-day review growth"
+is the reader's phrase, from the certified term.
+
+**What caused it, honestly.** Not today's change on its own. The term was certified before today,
+and the old `_visible` did not read provenance — so a `proposed` or `certified` term was in the
+index either way. The 08-17 refusals are explained by the draft **not existing yet** when that
+process built its index. Today's changes add two different things: only `certified` gets in, and an
+approval reaches the next turn without a restart. What this measurement does establish is that the
+loop closes end to end — a reader's words reach a later answer — which is what the row said was
+unverified.
+
+**Finding 1 now has a durable instrument, and its first reading is still zero.** `TurnEntry`
+carries `assumptions`, so "shows its assumptions" is countable for the first time. Read off a real
+completed turn's envelope through the checkpointer:
+
+```
+['answer_text', 'asked_at', 'assumptions', 'outcome', 'question', 'record']
+  assumptions = []
+  outcome     = answered
+  answer_text = The `app_store.playstore` table contains **10,840 rows**.
+```
+
+One answered turn, zero assumptions stated. Checked before blaming the prompt: `state_assumption`
+is bound unfiltered into the tool list, and the default ANALYST variant (v9) names it with specific
+guidance added after the 2026-08-07 audit. Instruction and mechanism are both present, so the gap
+is recognition — and now it can be measured instead of argued.
+
+**One row moved on its own.** Finding 1's sharpest case — `What is the average rating of apps?`,
+recorded here as averaging the whole table including delisted apps and reporting `4.19` with no
+statement — now raises a **clarification** instead ("which app listing?"), and the turn correctly
+records no envelope because it is paused. Better than what this document recorded; not investigated
+further here.
+
+---
+
 ## What to say when handing this over
 
 **Say:** it refuses rather than guessing, and says so in plain language naming what it can see;
