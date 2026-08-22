@@ -79,8 +79,38 @@ def _headline(answer_text: str | None) -> str | None:
     return None
 
 
+def _echoes_an_input(literal: str, executed_sql: str | None) -> bool:
+    """``literal`` appears as a number in the statement that ran, so it is a filter it echoes.
+
+    **Measured, not assumed (2026-08-22).** The first 120-question arm carrying this check
+    flagged only turns of one shape, and every one was a false positive: the answer opened by
+    restating the question's own filter in bold before giving its result — *"Elevation **1039**
+    matches multiple cities"*, *"For ZIP code **1116**:"*, *"the range **1,700–2,000**
+    inclusive matches:"*. A number the query compared *against* is an input the reader handed
+    over; claiming the result set should contain it is a category error, and on a corpus with no
+    authored definitions at all — where a recited constant is impossible — those were 4 flags out
+    of 4.
+
+    A crude rule on purpose: it only ever *suppresses*, so its worst case is a missed defect and
+    never a fabricated one. Numbers a statement carries for other reasons (``LIMIT 200001``, a
+    type precision) are swept up with the filters, which costs nothing unless an answer's real
+    figure happens to equal one.
+    """
+    if not executed_sql:
+        return False
+    asserted = _as_float(literal)
+    if asserted is None:
+        return False
+    places = len(literal.split(".")[1]) if "." in literal else 0
+    tolerance = 0.5 * (10.0**-places)
+    return any(
+        (value := _as_float(found)) is not None and abs(value - asserted) < tolerance
+        for found in _NUMBER_RE.findall(executed_sql)
+    )
+
+
 def unsupported_headline_number(
-    answer_text: str | None, result_table: object | None
+    answer_text: str | None, result_table: object | None, executed_sql: str | None = None
 ) -> str | None:
     """The answer's headline figure, when the query that ran did not return it. Else ``None``.
 
@@ -95,14 +125,30 @@ def unsupported_headline_number(
 
     Rounding is respected at the precision the answer chose: ``4.19`` is supported by
     ``4.191757416587698``, because reporting two decimals of a real average is not a discrepancy.
+    So is the result's **row count**, and so is a figure the executed statement carries as a
+    literal — the first because counting the rows is an answer, the second because a value the
+    query compared *against* came from the reader. Both were false positives on a real arm
+    before they were rules here; see the two helpers.
     A turn that ran no query returns ``None`` rather than a flag -- it is the ``no_sql`` case, and
     two names for one fact is how two readers come to disagree.
 
     Measured on all 18 answered turns of that session: **2 flagged, both real, no false
-    positives.** ``~/Antigravity/experiments/010_stated-assumptions-channel/`` has the artifacts.
+    positives** — and then re-measured on a 120-question data-lake arm, where every flag was a
+    false positive of one shape and :func:`_echoes_an_input` is what that bought. The first
+    reading was on answers of one form (*"There are **N** apps"*); the second is why a check is
+    not shippable on the strength of the sample that motivated it.
+    ``~/Antigravity/experiments/010_stated-assumptions-channel/`` has both artifacts.
     """
     literal = _headline(answer_text)
     if literal is None:
+        return None
+    if _echoes_an_input(literal, executed_sql):
+        # The answer led with its own inputs, so this check has no claim to test. Deliberately
+        # **not** "take the next bolded figure instead": that was measured on the same arm and
+        # kept 2 of the 4 false positives, on figures (a count of listed cities, a flight total)
+        # that could not be adjudicated either way at that sample size. Moving a false positive
+        # is not removing it, and a check allowed to guess here would be spending the credibility
+        # this one exists to protect.
         return None
     asserted = _as_float(literal)
     if asserted is None:
@@ -118,6 +164,19 @@ def unsupported_headline_number(
     # correctly.
     places = len(literal.split(".")[1]) if "." in literal else 0
     tolerance = 0.5 * (10.0**-places)
+    # **How many rows came back is an answer too** (measured 2026-08-22). "All **7,297 flights**
+    # arriving at Miami have the air carrier..." and "The filter matches **115,688**
+    # paper-author records" are both correct and neither figure is in any *cell* — the query
+    # selected descriptions and titles, and the count of its rows is what the reader asked for.
+    # Two of the three flags that survived input-echo suppression on the first data-lake arm
+    # were this, which is why it is here and was not in the version validated on 18 turns: no
+    # answer in that set counted its own result set. ``row_count`` rather than ``len(rows)``,
+    # because ``rows`` may be truncated for display while the count is the real one.
+    row_count = _as_float(result_table.get("row_count")) if isinstance(result_table, dict) else None
+    if row_count is None:
+        row_count = float(len(rows))
+    if abs(row_count - asserted) < tolerance:
+        return None
     for row in rows:
         cells = list(row.values()) if isinstance(row, dict) else list(row)
         for cell in cells:

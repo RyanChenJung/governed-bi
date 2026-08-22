@@ -475,7 +475,12 @@ def stamp(state: Mapping[str, Any]) -> dict[str, Any]:
         # not a rate), and a check that changed answers before it had one would be trading a
         # measured failure for an unmeasured one.
         "unsupported_number": unsupported_headline_number(
-            state.get("answer_text"), state.get("result_table")
+            state.get("answer_text"),
+            state.get("result_table"),
+            # `record`'s copy, not the channel's: `register/record.py` declares this field as the
+            # statement the engine *sent*, and that is the one whose literals are the reader's
+            # own filter values.
+            record.get("generated_sql"),
         ),
     }
     # The turn's one ``final`` event (ADR 0010 §1). Emitted here because ``stamp`` is the one

@@ -170,3 +170,119 @@ def test_an_answer_from_before_the_field_existed_reads_as_none() -> None:
     (entry,) = record_node()({"answer": answer, "question": "q"})["turns"]
 
     assert entry["unsupported_number"] is None
+
+
+# ── the false positives a 120-question arm found ─────────────────────────────
+#
+# The 18-turn validation above was on answers of one form ("There are **N** apps"). The first
+# data-lake arm carrying this check flagged only turns of a *different* form, and every flag was
+# wrong: the answer opened by restating the question's own filter in bold. Four out of four, on a
+# corpus with no authored definitions at all — where a recited constant is impossible, so the
+# whole flag count was noise. This is what `_echoes_an_input` is for, and these are its cases,
+# verbatim from `runs/eval/fp_probe_structure_only.jsonl`.
+
+
+def test_a_bolded_filter_value_is_not_a_claim() -> None:
+    """``For ZIP code **1116**:`` — the number came from the reader, not from the data."""
+    answer = "For ZIP code **1116**:\n\n- **City:** Longmeadow\n- **Area code:** 413"
+    sql = 'SELECT "city", "area_code" FROM "address"."zip_data" WHERE "zip_code" = 1116'
+
+    assert unsupported_headline_number(answer, _table("Longmeadow"), sql) is None
+
+
+def test_a_bolded_range_from_the_question_is_not_a_claim() -> None:
+    """``the range **1,700–2,000** inclusive matches:`` — both ends are inputs."""
+    answer = "Using the ZIP-level white population, the range **1,700–2,000 inclusive** matches:"
+    sql = 'SELECT COUNT(*) FROM "address"."zip_data" WHERE "white" BETWEEN 1700 AND 2000'
+
+    assert unsupported_headline_number(answer, _table(242), sql) is None
+
+
+def test_the_check_declines_rather_than_taking_the_next_figure() -> None:
+    """Deliberate, and measured: chasing kept 2 of the 4 false positives.
+
+    Those two landed on figures — a count of listed cities, a flight total — that could not be
+    adjudicated either way at that sample size. Moving a false positive is not removing it, and a
+    check allowed to guess here spends the credibility it exists to protect. If a later arm can
+    adjudicate them, that is the measurement that licenses chasing.
+    """
+    answer = "The range **1,700–2,000** matches:\n- **1,001 cities**\n- **242 area codes**"
+    sql = 'SELECT COUNT(DISTINCT "area_code") FROM "z" WHERE "white" BETWEEN 1700 AND 2000'
+
+    assert unsupported_headline_number(answer, _table(242), sql) is None
+
+
+def test_a_recited_constant_is_still_caught_when_the_sql_is_known() -> None:
+    """The suppression must not have swallowed the defect the check exists for.
+
+    ``COUNT(*)`` carries no literal that 8,512 could echo, which is exactly why a recited corpus
+    constant survives a rule aimed at echoed inputs.
+    """
+    answer = "There are **8,512 active apps** in the mobile app market listing."
+    sql = 'SELECT COUNT(*) AS app_count FROM "app_store"."mobile_app_market"'
+
+    assert unsupported_headline_number(answer, _table(10840), sql) == "8,512"
+
+
+def test_without_the_sql_nothing_is_suppressed() -> None:
+    """The parameter is optional, and absent means "no inputs known", not "suppress"."""
+    answer = "There are **8,512 active apps**."
+
+    assert unsupported_headline_number(answer, _table(10840)) == "8,512"
+    assert unsupported_headline_number(answer, _table(10840), None) == "8,512"
+    assert unsupported_headline_number(answer, _table(10840), "") == "8,512"
+
+
+# ── counting the rows is an answer ───────────────────────────────────────────
+#
+# The other two flags that survived input-echo suppression on that arm, and both were correct
+# answers: the query selected descriptions and titles, and what the reader asked for was how many
+# came back. No answer in the 18-turn set counted its own result, which is why this rule is here
+# and was not there.
+
+
+def test_the_row_count_supports_a_figure_no_cell_holds() -> None:
+    """``All **7,297 flights** arriving at Miami have the air carrier...`` — 7,297 rows came back."""
+    answer = "All **7,297 flights** arriving at Miami have the air carrier description: AA"
+    table = {"columns": ["Description"], "rows": [["AA"]] * 3, "row_count": 7297}
+
+    assert unsupported_headline_number(answer, table) is None
+
+
+def test_the_declared_row_count_wins_over_the_rows_present() -> None:
+    """``rows`` may be truncated for display; ``row_count`` is the real one.
+
+    Without this the rule would only work for results small enough to be carried whole, which is
+    the opposite of the case it was found on — a 115,688-row match reported from a sample.
+    """
+    answer = "The filter matches **115,688 paper-author records**."
+    table = {"columns": ["Title"], "rows": [["a"], ["b"]], "row_count": 115688, "truncated": True}
+
+    assert unsupported_headline_number(answer, table) is None
+
+
+def test_a_count_the_recorded_query_cannot_produce_is_still_caught() -> None:
+    """The one flag that survived every rule on that arm, and it is real.
+
+    The engine paged: the answer lists 74 tail numbers and claims 74, while the recorded
+    ``generated_sql`` ends ``LIMIT 20 OFFSET 60`` and returns 14 rows. Neither a cell nor the row
+    count supports the figure, and none of the numbers in the statement is 74 — so an auditor
+    reading the record sees a 14-row query beside an answer asserting 74. A *different* mechanism
+    from the recited corpus constant, found by this check on its first real arm.
+    """
+    answer = "I found **74 distinct aircraft** that arrived on time at Meadows Field."
+    sql = (
+        'SELECT DISTINCT a."TAIL_NUM" FROM "airline"."Airlines" AS a '
+        'WHERE a."ARR_DELAY" <= 0 ORDER BY a."TAIL_NUM" LIMIT 20 OFFSET 60'
+    )
+    table = {"columns": ["TAIL_NUM"], "rows": [["N955LR"]] * 14, "row_count": 14}
+
+    assert unsupported_headline_number(answer, table, sql) == "74"
+
+
+def test_a_missing_row_count_falls_back_to_the_rows_it_has() -> None:
+    """A payload from before the field, or any table built without it."""
+    answer = "There are **3 carriers**."
+    table = {"columns": ["c"], "rows": [["a"], ["b"], ["c"]]}
+
+    assert unsupported_headline_number(answer, table) is None
