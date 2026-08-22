@@ -330,8 +330,27 @@ positives** — the negatives that would have sunk it are real answers too, a ro
 
 **Nothing routes on it.** No refusal, no rewrite, no change to what a reader sees. 18 answers is a
 start and not a rate, and a check that changed answers before it had one would trade a measured
-failure for an unmeasured one. Getting that rate off real traffic is the next decision, not this
-change.
+failure for an unmeasured one.
+
+**That rate was then taken, and it says the check was not shippable (2026-08-20, 120 data-lake
+questions).** Over the 55 answered turns that state a bold figure it flagged **18 — 32.7% — and
+every one was wrong.** The 18-turn validation could not have found that: all of it was one
+question in one prose form, and none of those answers restated a filter, counted its own result
+set, or scaled a ratio. Two rules measured on the same arm — a figure the executed statement
+carries is an *input*, and the result's row count is an answer — take it to 5 (9.1%), of which
+**1 is real. Precision 20%.**
+
+So the field stays recorded and warns nobody, which is now a justified position rather than a
+cautious one. Three of the four remaining false positives have obvious suppressions (a cell scaled
+by 100, the sum of a returned column, a digit inside a bolded title); they are deliberately not
+implemented, because this artifact has already been used to derive two rules and deriving three
+more from it would make the resulting rate a training-set number.
+
+**The one real flag is a mechanism this document has not recorded before.** An answer listing 74
+aircraft tail numbers and claiming 74, against a `generated_sql` ending `LIMIT 20 OFFSET 60` that
+returns 14 rows: the engine paged, and only the final page reached the record. Not a recited corpus
+constant. So "the answer is not supported by the statement on the record" has at least two causes,
+and the instrument found the second on its first real outing.
 
 **Both verified live, not on replay.** Six further turns through the real graph: the corpus
 announced the poisoned rule at session build before answering anything, and `unsupported_number`
