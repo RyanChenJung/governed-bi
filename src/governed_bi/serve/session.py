@@ -21,11 +21,11 @@ from governed_bi.register.prompts import select as selected_variants
 from ..corpus.analyst import for_analyst
 from ..corpus.asserted_identifiers import asserted_identifier_problems
 from ..corpus.hash import corpus_content_hash
+from ..corpus.provenance import withheld_as_uncertified
 from ..corpus.schema import (
     Asset,
     AssetType,
     MetricAsset,
-    ProvenanceStatus,
     TableAsset,
     TermAsset,
 )
@@ -98,6 +98,18 @@ class Session:
     prompt_variants: Mapping[str, str] = field(default_factory=dict)
     embedder: Embedder | None = None
     problems: tuple[Any, ...] = ()
+    #: ``{asset type -> count}`` for assets the corpus held and this session will not serve, by
+    #: exclusion or by unapproved provenance. **Not a problem, which is why it needed its own
+    #: field**: withholding a draft is the gate working, and ``problems`` is for a corpus that is
+    #: not what it claims. But it is never a detail either — it is how much of the treatment is
+    #: absent, and a measurement that does not state it is quoting a number for a corpus it did
+    #: not serve.
+    #:
+    #: Added 2026-08-22, after a 13,304-asset corpus resolved to 0 servable assets with 0
+    #: problems reported and every reader downstream saying nothing (see
+    #: ``corpus/provenance.py::PROVENANCE_GATED``). The collapse was visible in this number and
+    #: in nothing else.
+    withheld: Mapping[str, int] = field(default_factory=dict)
     corpus_root: Path | None = None
     _turns: list[str] = field(default_factory=list, repr=False, compare=False)
 
@@ -193,6 +205,23 @@ class Session:
 # ── construction ──────────────────────────────────────────────────────────────
 
 
+def _withheld_counts(assets: Sequence[Asset], visible: Sequence[Asset]) -> dict[str, int]:
+    """How many assets of each type the corpus held and this session will not serve.
+
+    Derived from the two lists rather than from the predicates, so it counts what actually
+    happened — including anything the closure pulled out for a reference it could no longer
+    resolve, which is the part no per-asset check would report.
+    """
+    served = {a.id for a in visible}
+    counts: dict[str, int] = {}
+    for asset in assets:
+        if asset.id in served:
+            continue
+        name = getattr(getattr(asset, "asset_type", None), "name", "unknown")
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def _index_entries(assets: Sequence[Asset], structure: CorpusStructure) -> list[Any]:
     """Assets as index entries, tagged from the same ``CorpusStructure`` resolution as the edges."""
     from ..retrieve.index import IndexEntry
@@ -212,19 +241,12 @@ def _is_excluded(asset: Any) -> bool:
     return bool(getattr(getattr(asset, "governance", None), "excluded", False))
 
 
-def _is_uncertified(asset: Any) -> bool:
-    """``asset`` carries provenance saying no admin has approved it yet.
-
-    **Absence of provenance is not evidence of a draft.** The seeded corpora carry no ``audit``
-    block at all, so reading a missing one as uncertified would withhold every asset this
-    project has ever shipped. ``corpus/analyst.py::for_analyst`` draws the line in the same
-    place and says so in the same words; the two must agree, because two definitions of one
-    disposition that drifted is what ``govern/check.py``'s B10 guard exists for.
-    """
-    provenance = getattr(getattr(asset, "audit", None), "provenance", None)
-    if provenance is None:
-        return False
-    return getattr(provenance, "status", None) is not ProvenanceStatus.certified
+#: One reader for "an authored definition nobody approved", shared with the authorisation layer
+#: (``corpus/analyst.py::for_analyst``). Defined in ``corpus/provenance.py`` because that module
+#: owns provenance semantics and because two copies of this rule is exactly the drift
+#: ``govern/check.py``'s B10 guard exists for — see that constant's note for the corpus a wider
+#: version of it emptied.
+_is_uncertified = withheld_as_uncertified
 
 
 def _is_withheld(asset: Any) -> bool:
@@ -517,6 +539,7 @@ def from_assets(
     # is most worth seeing while someone is deciding whether to certify it, and anything
     # awaiting that decision is withheld from `visible` by definition.
     asserted_problems = asserted_identifier_problems(assets)
+    withheld = _withheld_counts(assets, visible)
     entries = _index_entries(visible, structure)
     index = build_index(entries, embedder=embedder, vector_cache=vector_cache)
     knobs = _resolved_knobs(policy)
@@ -591,6 +614,7 @@ def from_assets(
         prompt_variants=dict(prompt_variants or {}),
         embedder=embedder,
         problems=(*problems, *structure_problems, *asserted_problems),
+        withheld=withheld,
         corpus_root=corpus_root,
     )
 

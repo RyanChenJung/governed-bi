@@ -12,7 +12,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .identity import slug
-from .schema import Asset, ColumnAsset, Governance, ProvenanceStatus, Reliability, ReliabilityStatus
+from .provenance import withheld_as_uncertified
+from .schema import Asset, ColumnAsset, Governance, Reliability, ReliabilityStatus
 from .validate import _bare
 
 __all__ = [
@@ -92,6 +93,14 @@ def for_analyst(assets: Sequence[Asset]) -> AnalystCorpus:
     of provenance is not evidence of an unreviewed draft, and treating it as one would hide
     every asset this project has ever shipped.
 
+    **And the gate only reaches authored types** (``provenance.PROVENANCE_GATED``, shared with
+    ``serve/session.py::_visible`` so retrieval and authorisation cannot drift). The paragraph
+    below argues that every ``proposed`` asset our own write path can mint is a ``TermAsset`` or
+    a ``FewShotAsset`` — true, and it was the blind spot: a corpus we did not write can carry
+    ``draft`` **tables**, and dropping a real table here refuses every statement against it while
+    dropping it in ``_visible`` took its columns with it. ``../BIRD-corpus`` is that corpus. See
+    ``PROVENANCE_GATED`` for what it cost between 2026-08-19 and 2026-08-22.
+
     **Why an uncertified asset is dropped outright and gets no ``excluded_columns`` twin.** An
     excluded column is recorded rather than dropped, because ``check()`` needs the key to bind a
     bare name and refuse it as *excluded* instead of failing as *ambiguous* — a silent absence
@@ -113,8 +122,7 @@ def for_analyst(assets: Sequence[Asset]) -> AnalystCorpus:
             if isinstance(asset, ColumnAsset):
                 excluded_cols.add(column_key_for(asset))
             continue
-        provenance = getattr(asset.audit, "provenance", None) if asset.audit is not None else None
-        if provenance is not None and provenance.status is not ProvenanceStatus.certified:
+        if withheld_as_uncertified(asset):
             continue
         visible[asset.id] = asset
         if isinstance(asset, ColumnAsset):

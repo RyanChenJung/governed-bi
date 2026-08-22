@@ -48,6 +48,27 @@ DEFAULT_CORPUS = REPO.parent / "BIRD-corpus"
 DEFAULT_DATASET = REPO.parent / "BIRD-Data-Obfuscation" / "eval_dataset"
 
 
+def _withheld_line(session: Any) -> str:
+    """One line naming how much of the corpus this arm will not serve, or nothing.
+
+    **The corpus is the treatment identity of every number this driver prints** (see
+    ``docs/measurement.md``), and until 2026-08-22 the banner reported only what was served --
+    so an arm over a corpus whose authored assets were all withheld looked identical to an arm
+    over one that had none. It is not a warning and it does not stop the run: withholding an
+    unapproved definition is the gate working. It is a fact that belongs next to the number,
+    because a semantic-layer arm serving no semantic layer is measuring something else.
+    """
+    withheld = dict(getattr(session, "withheld", None) or {})
+    if not withheld:
+        return ""
+    total = sum(withheld.values())
+    detail = ", ".join(f"{name} {count}" for name, count in sorted(withheld.items()))
+    return (
+        f"withheld={total} assets the corpus holds and this arm will not serve ({detail}) "
+        "-- excluded by governance, or authored and not certified\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus-dir", default=DEFAULT_CORPUS)
@@ -561,14 +582,20 @@ def main(argv: list[str] | None = None) -> int:
         + "\n"
         f"corpus={args.corpus_dir} ({len(session.assets_by_id)} assets, {len(schemas)} schemas, "
         f"{len(session.degradations)} degradations)\n"
-        f"questions={total}"
+        + _withheld_line(session)
+        + f"questions={total}"
         + (f" (resumed, {len(done)} measured" if done else "")
         + (f", {retrying} crashed rows requeued" if retrying else "")
         + (")" if done else ""),
         flush=True,
     )
     if not total:
-        print("nothing to do", flush=True)
+        print(
+            "nothing to do -- and if the corpus line above reports 0 assets, that is the reason. "
+            "A corpus can load cleanly and still serve nothing (serve/session.py::_visible); "
+            "read the withheld line, not the exit code.",
+            flush=True,
+        )
         return 0
 
     handle = out_path.open("a", encoding="utf-8")

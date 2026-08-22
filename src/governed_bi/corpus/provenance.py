@@ -18,13 +18,56 @@ other; keep both.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TypeVar
+from typing import Any, TypeVar
 
+from ..register.assets import AssetType
 from .schema import Asset, Audit, Governance, Provenance, ProvenanceSource, ProvenanceStatus
 
-__all__ = ["restamp_model_authored"]
+__all__ = ["restamp_model_authored", "PROVENANCE_GATED", "withheld_as_uncertified"]
 
 A = TypeVar("A", bound=Asset)
+
+#: The asset types whose provenance decides whether they may be **served**.
+#:
+#: Only what a person — or a model on a person's behalf — *authors*. A ``table``, ``column``,
+#: ``schema`` or ``join`` comes from introspection, so its provenance describes whether its prose
+#: was reviewed, not whether the thing exists, and no approval makes a real table more or less
+#: true. The same set ``corpus/asserted_identifiers.py`` scans, for the same underlying reason:
+#: this is where a corpus states something someone decided.
+#:
+#: **This set exists because its absence cost a whole corpus (2026-08-19 → 2026-08-22).** The
+#: draft/approve gate was applied to every type uniformly, which is right for a definition and
+#: wrong for a fact. ``../BIRD-corpus`` carries 656 tables and 57 schemas at ``status: draft``
+#: from the harvest that built them; withholding a table correctly takes its columns with it
+#: (``serve/session.py::_withheld_closure``), so 13,304 assets resolved to **0 servable** — with
+#: 0 fatal problems reported, the eval driver printing "nothing to do", and exit code 0. Every
+#: measurement arm over that corpus would have served an empty semantic layer and said nothing.
+PROVENANCE_GATED = frozenset(
+    {AssetType.term, AssetType.few_shot, AssetType.metric, AssetType.negative_example}
+)
+
+
+def withheld_as_uncertified(asset: Any) -> bool:
+    """``asset`` is an authored definition and nothing says a human approved it.
+
+    **One definition, two readers**, because they answer the same question at two layers and a
+    drift between them is what ``govern/check.py``'s B10 guard exists for: retrieval
+    (``serve/session.py::_visible`` — may the model *see* it) and authorisation
+    (``corpus/analyst.py::for_analyst`` — may a statement *use* it). Both had this logic inline
+    and both had it too wide.
+
+    Two absences are deliberately not withholding:
+
+    * **No provenance at all.** Every seeded corpus in this repo ships assets with no ``audit``
+      block, so reading a missing one as a draft would hide everything the project has shipped.
+    * **A type outside** :data:`PROVENANCE_GATED` — see that constant for what it cost.
+    """
+    if getattr(asset, "asset_type", None) not in PROVENANCE_GATED:
+        return False
+    provenance = getattr(getattr(asset, "audit", None), "provenance", None)
+    if provenance is None:
+        return False
+    return getattr(provenance, "status", None) is not ProvenanceStatus.certified
 
 
 def restamp_model_authored(

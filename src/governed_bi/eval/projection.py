@@ -443,6 +443,20 @@ def project_turn(
         # :func:`~governed_bi.eval.datalake.attach_quality_flags`.
         "quality_flags": list(question.get("quality_flags") or ()),
         "generated_sql": generated_sql,
+        # **What the engine actually said, and whether its own figure was in its own result.**
+        # Added 2026-08-20 so `unsupported_headline_number` can be priced before it is allowed
+        # to change an answer. `stamp` computes the flag from the turn's `result_table` -- the
+        # rows the model was handed -- and it is read off the answer here rather than recomputed
+        # from `pred_rows` below, which is this harness's *re-execution* and a different fact.
+        #
+        # `answer_text` rides along because a flag nobody can adjudicate is not a measurement:
+        # judging a false positive means reading the sentence the figure sits in. It is also the
+        # first time this artifact carries what the engine said at all -- every field beside it
+        # describes the SQL.
+        "answer_text": answer.get("answer_text") if isinstance(answer, Mapping) else None,
+        "unsupported_number": (
+            answer.get("unsupported_number") if isinstance(answer, Mapping) else None
+        ),
         "gold_sql": question.get("gold_sql"),
         "gold_fingerprint": grade.get("gold_fingerprint"),
         "pred_fingerprint": grade.get("pred_fingerprint"),

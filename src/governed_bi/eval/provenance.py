@@ -334,6 +334,21 @@ def _identity_problem(
     return refusal, warning, pre_routing
 
 
+def _json_shaped(value: Any) -> Any:
+    """``value`` as it would come back from JSON: tuples and sets become lists, recursively.
+
+    Scalars are untouched, so this normalises **shape** and never type: the ``repr`` comparison
+    in :func:`_knob_problem` still separates ``3`` from ``"3"`` and ``[1]`` from ``["1"]``. Only
+    the container class -- the one thing a JSON round trip is guaranteed to change -- is made
+    equal to itself.
+    """
+    if isinstance(value, Mapping):
+        return {str(k): _json_shaped(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_shaped(v) for v in value]
+    return value
+
+
 def _knob_problem(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -352,6 +367,16 @@ def _knob_problem(
 
     ``repr`` rather than ``==``, for the reason the within-arm gate gives: ``3`` and ``"3"`` are
     two configurations, and a comparison that coerced them would report drift as agreement.
+
+    **Through :func:`_json_shaped` first, or no artifact resumes (fixed 2026-08-22).** The
+    artifact side has been through JSON, where a tuple comes back a list, so a knob whose value
+    is a nested sequence could never compare equal to itself: ``asset_budgets`` resolves to a
+    tuple of pairs, and ``--resume`` refused **every** artifact on that key alone, printing two
+    lines of identical-looking values as the reason. That made the flag ``docs/measurement.md``
+    prescribes for surviving a multi-hour arm ("expect to interrupt it and resume it")
+    unusable, and the failure read as a real treatment drift rather than as a serialisation
+    artifact. Canonicalising containers keeps the distinction the ``repr`` is here for -- ``3``
+    and ``"3"`` still differ, and so do ``[1]`` and ``["1"]``.
 
     A key absent from every row **and** from this run is skipped — both sides declined to say.
     No live run is in that state: ``session._resolved_knobs`` omits no key, so this run always
@@ -377,7 +402,7 @@ def _knob_problem(
             if not isinstance(recorded, Mapping) or key not in recorded:
                 absent += 1
                 continue
-            seen.add(repr(recorded[key]))
+            seen.add(repr(_json_shaped(recorded[key])))
         declared = key in knobs_resolved
         if not seen and not declared:
             continue
@@ -395,7 +420,7 @@ def _knob_problem(
                 f"{absent} resumed row(s) carry no {key!r}, so they cannot be shown to have "
                 "run under this run's value"
             )
-        if seen != {repr(want)}:
+        if seen != {repr(_json_shaped(want))}:
             refusals.append(
                 f"  the artifact ran under a different {key}:\n"
                 f"    this run: {want!r}\n"
