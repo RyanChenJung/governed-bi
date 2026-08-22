@@ -49,7 +49,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileClock } from "lucide-react";
+import { AlertTriangle, FileClock } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, ApiError } from "@/lib/api-client";
@@ -129,6 +129,7 @@ function DraftCard({ row, editable }: { row: DraftRow; editable: boolean }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {row.body && <p className="whitespace-pre-wrap text-sm">{row.body}</p>}
+        {row.unresolved_filters.length > 0 && <UnresolvedFilters names={row.unresolved_filters} />}
         <p className="text-xs text-muted-foreground">
           Still proposed — it is withheld from the corpus the engine serves, so it cannot reach a
           live answer or license a column until an admin approves it.
@@ -145,5 +146,44 @@ function DraftCard({ row, editable }: { row: DraftRow; editable: boolean }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** The one thing on this screen that can only be known *before* certifying.
+ *
+ * A certified correction read "exclude apps flagged delisted=true" against a schema that has
+ * never had a `delisted` column. Measured over 8 live turns of the question it governed
+ * (2026-08-20): three declined the rule and said why, and one asserted the filter it had never
+ * applied — through the assumptions field, so the wrong answer arrived looking *more* governed
+ * than an ungoverned one. Nothing on this card could have said so, because the only reader that
+ * knows which names exist is the corpus.
+ *
+ * Styled after `CorpusFatalNotice` rather than as a muted note, and placed above the "still
+ * proposed" line, because the decision it informs is the button below it. It renders only when
+ * the list is non-empty — every draft in every seeded corpus has an empty one, and a badge every
+ * card wears is not a warning. The rule is not necessarily wrong: the constant in it may be
+ * right and only the filter unrunnable, which is why this asks the admin to look rather than
+ * blocking the approve button.
+ */
+function UnresolvedFilters({ names }: { names: string[] }) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-tier-refused/40 bg-tier-refused/5 px-3 py-2">
+      <p className="flex items-center gap-2 text-xs font-medium">
+        <AlertTriangle className="size-3.5 shrink-0 text-tier-refused" />
+        {names.length === 1
+          ? "This rule filters on something your data does not have"
+          : `This rule filters on ${names.length} things your data does not have`}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        No table or column is named{" "}
+        {names.map((name, i) => (
+          <span key={name}>
+            {i > 0 && (i === names.length - 1 ? " or " : ", ")}
+            <span className="rounded bg-background/60 px-1 font-mono">{name}</span>
+          </span>
+        ))}
+        {". If you certify this, the engine can only act on the answer it states — not the rule behind it — and it may report that filter as applied when it was not."}
+      </p>
+    </div>
   );
 }

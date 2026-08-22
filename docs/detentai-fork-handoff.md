@@ -5,13 +5,22 @@ against, exactly which parts of the engine it touches and why, and the one piece
 you. Where this fork had to choose between two legitimate designs, the choice made and its evidence
 are stated below rather than asked about.
 
-> **One exception, added 2026-08-19, and it is the only thing here that needs a ruling from you.**
-> This fork **amended ADR 0005 §2.8.2.2** on the served path: a `Session` is still built once and
-> still frozen, but "once" now means once per corpus rather than once per process, so an admin's
-> approval reaches the reader's next turn instead of the next restart. Three files
-> (`api/graph_app.py`, `serve/accept.py`, `api/curation_routes.py`), and the ADR carries the same
-> note at the section it amends. Jump to
+> **Two exceptions, and they are the only two things here that need a ruling from you.**
+>
+> **1 (2026-08-19).** This fork **amended ADR 0005 §2.8.2.2** on the served path: a `Session` is
+> still built once and still frozen, but "once" now means once per corpus rather than once per
+> process, so an admin's approval reaches the reader's next turn instead of the next restart. Three
+> files (`api/graph_app.py`, `serve/accept.py`, `api/curation_routes.py`), and the ADR carries the
+> same note at the section it amends. Jump to
 > [**An approval now reaches the next turn**](#an-approval-now-reaches-the-next-turn-we-changed-your-seam-to-do-it--please-rule-on-it).
+>
+> **2 (2026-08-20).** A new module, `corpus/asserted_identifiers.py`, reports a corpus asset that
+> filters on a column the data does not have. It does **not** touch `corpus/validate.py`, whose
+> "no `body` rule (I2)" it reads as scoped to asset-local validation — but if you read I2 as
+> covering this too, say so and it comes out. Found because a certified correction said *"exclude
+> apps flagged `delisted=true`"* against a schema that has never had that column. See
+> [**A certified rule is recited, not recomputed**](#a-certified-rule-is-recited-not-recomputed--and-as-of-2026-08-20-that-is-the-detectable-half).
+>
 > Everything else in this fork sits beside your decisions rather than changing them.
 
 **Why this file lives flat in `docs/`, not `docs/adr/`.** Same reason as
@@ -458,12 +467,43 @@ table"*), and 1 of 8 asserted the filter it never applied. The second is the exp
 it arrives *through* `state_assumption` — **the feature that makes a good answer auditable also
 launders a bad one.**
 
-The check that would catch it is the mirror of `serve/schema_term_guard.py`: that one forbids schema
-identifiers in text addressed to a user; this needs identifiers *asserted by* a corpus asset to
-resolve against the schema it is scoped to. **Not built here** — it is a new gate class against a
-design position you wrote down, so it is a ruling, not a patch. The 8,512 row is our own seeded
-demo data, so nothing of yours is broken; what the measurement shows is that the write path will
-certify and serve any correction a human writes the way humans write them.
+**Two checks were built for this on 2026-08-20, and this is the part that needs your ruling.**
+Neither one edits a file of yours; both are new modules plus one call site each. But the first sits
+next to a position you wrote down, so please read it as a proposal rather than a fait accompli.
+
+`corpus/asserted_identifiers.py` is the mirror of `serve/schema_term_guard.py` — that one forbids
+identifier-shaped text in sentences addressed to a *user* and is shape-based on purpose ("a column
+named `status` is an ordinary English word"); this one takes text an admin *wrote*, where
+identifiers are expected, and asks whether they resolve. **Deliberately not in `validate.py`.** Your
+"no `body` rule (I2)" is about asset-local validation, and nothing asset-local could know whether a
+name resolves; this needs the corpus's whole name universe, which `serve/session.py::from_assets`
+already assembles for `build_structure`. So it is a sibling of your dangling-ref check, reports the
+same `Problem` with `fatal=False`, and reaches `/audit/corpus` through machinery that already
+existed. **If you read I2 as covering this too, say so and it comes out** — the finding survives in
+`docs/handoff-claim-audit-2026-08-18.md` either way.
+
+Its false-positive rate was measured before it landed, because a check that reports on a healthy
+corpus is worse than none. Three wider detectors were prototyped and dropped on measurement; what
+shipped is `identifier = literal` only. **5,947 authored assets across five corpora: 209
+predicate-shaped tokens found, 208 resolved, one flag — the real one.** `GET /corpus/drafts` gained
+a sixth field, `unresolved_filters`, so an admin sees it on the card they are about to approve,
+which is the only moment the defect is still preventable.
+
+`serve/structured_check.py::unsupported_headline_number` is the second, and it lands in the module
+your own docstring reserves for post-execution result checks. It compares the answer's headline
+figure against every cell the executed query returned, at the precision the answer chose, and
+`stamp` puts it on the `TurnEntry` envelope beside `assumptions` — same class, same reason (ADR 0006
+§11). Validated on all 18 answered turns before wiring: 2 flagged, both real, no false positives.
+**Nothing routes on it** — no refusal, no rewrite, nothing a reader sees. 18 answers is a start and
+not a rate, and pricing this against real traffic before it changes an answer is the next decision.
+
+Both fired on live traffic afterwards, including one turn that ran `COUNT(*)` (10,840) and narrated
+**8,512**. Over all 14 measured turns of that question: 8 grounded, 4 publishing a figure the record
+does not support, 2 with no SQL at all.
+
+The 8,512 row is our own seeded demo data, so nothing of yours is broken; what the measurement
+shows is that the write path will certify and serve any correction a human writes the way humans
+write them.
 
 **One correction to this fork's own earlier design intent, made here rather than left stale.**
 Earlier working notes described the write-back path as togglable between "auto-certify" and

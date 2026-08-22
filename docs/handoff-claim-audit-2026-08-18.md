@@ -289,12 +289,56 @@ reads as more trustworthy than a wrong answer without one.** The feature that ma
 auditable also launders a bad one, and nothing today distinguishes the two.
 
 `corpus/validate.py` cannot catch this as written — *"No `body` rule (I2)"* is its own stated
-design. The check that would is the mirror of `serve/schema_term_guard.py`: that one forbids schema
-identifiers in text addressed to a user, this needs identifiers *asserted by* a corpus asset to
-resolve against the schema it is scoped to. **Not built.** It is a new gate class and a ruling, not
-a bug fix, and Finding 2's own closing sentence already named the distinction it turns on — rules
-that state a filter generalise, rules that state a result do not, and *rules that state a filter
-over a column that does not exist* are a third case nobody has priced.
+design. So the check went next to it rather than into it: `corpus/asserted_identifiers.py` is the
+mirror of `serve/schema_term_guard.py` — that one forbids schema identifiers in text addressed to a
+user and is shape-based on purpose, this one takes text an admin *wrote*, where identifiers are
+expected, and asks whether they resolve. Cross-asset, so it lives where `from_assets` already
+assembles the corpus's name universe, and it reports a **degradation** through the same `Problem`
+as the dangling-ref check. Finding 2's own closing sentence named the distinction it turns on:
+rules that state a filter generalise, rules that state a result do not, and *rules that state a
+filter over a column that does not exist* were a third case nobody had priced.
+
+**Built 2026-08-20, and its false-positive rate was measured before it landed**, because a check
+that reports on a healthy corpus is worse than none — a warning every row wears is not a warning.
+Three wider detectors were prototyped and dropped on measurement (a dotted path flagged 33
+resolving references, since a physical name may contain a space and `U.S` looks the same; a
+snake_case token flagged 13 assets legitimately naming a neighbour; a bare number after `=` flagged
+"Our target = 90 percent"). What shipped is `identifier = literal` only. **Over 5,947 authored
+assets in five corpora: 209 predicate-shaped tokens found, 208 resolved, one flag — the real one.**
+
+Worth recording because it is this document's recurring defect one more time: the first run
+reported **1,402 flags**, and all of them were the instrument's. Columns are nested on the table
+asset in one corpus layout and separate files in another, and the name universe only read the
+second — so the check called the corpus's own columns unresolved. A false-positive rate is a
+measurement *of the check*, and the first reading was of a bug in it.
+
+Surfaced in two places because they answer different questions: `/audit/corpus` already renders
+`degradations` ("is this corpus healthy"), and `GET /corpus/drafts` gained a sixth field,
+`unresolved_filters`, on the card an admin is about to approve — **the only moment the defect is
+still preventable.** Empty on all six real drafts in the seeded corpus; `['archived']` on a
+deliberately bad one.
+
+**And the undetectable half now has a durable field.**
+`serve/structured_check.py::unsupported_headline_number` compares the answer's headline figure —
+the first number in the first bold span, which is what keeps it quiet, since `"**4.19 out of 5**"`
+also contains a 5 — against every cell the executed query returned, at the precision the answer
+chose. `stamp` computes it (the one node holding both `answer_text` and `result_table`) and it
+rides the `TurnEntry` envelope beside `assumptions`, for the reason ADR 0006 §11 gives. Validated
+on all 18 answered turns of that session before wiring: **2 flagged, both real, no false
+positives** — the negatives that would have sunk it are real answers too, a rounded average against
+`4.191757416587698` (8 of the 18) and a `SUM` over a `BIGINT` that Postgres hands back as `str`.
+
+**Nothing routes on it.** No refusal, no rewrite, no change to what a reader sees. 18 answers is a
+start and not a rate, and a check that changed answers before it had one would trade a measured
+failure for an unmeasured one. Getting that rate off real traffic is the next decision, not this
+change.
+
+**Both verified live, not on replay.** Six further turns through the real graph: the corpus
+announced the poisoned rule at session build before answering anything, and `unsupported_number`
+fired twice — once on `COUNT(DISTINCT app_name)` (9,659) narrated as **10,840**, and once on
+`COUNT(*)` (10,840) narrated as **8,512**, which is the exact case this section called invisible.
+Over all 14 measured turns of that question: **8 grounded, 4 publishing a figure the record does
+not support, 2 with no SQL at all.**
 
 One caveat on blame: the 8,512 row is seeded demo data authored here on 2026-08-16, not a
 customer's admin. Nobody broke anything. What is real is that the write path accepts, certifies and
@@ -327,9 +371,13 @@ turns.
 **Say with the caveat attached:** that the system learns from corrections. It does — and a
 correction about a count is stored as that count, recited without re-querying, and does not
 generalise to a related question. Finding 2 is the one a technical reviewer will find first,
-and as of 2026-08-20 it is worse than it reads here: on 3 of 8 turns the number in the answer
-is not the number the recorded SQL produces, and on one of those a real query sits on the
-record contradicting it. Do not claim `generated_sql` proves the answer was computed.
+and as of 2026-08-20 it is worse than it reads here: on **4 of 14** turns the number in the answer
+is not the number the recorded SQL produces, and on two of those a real query sits on the record
+contradicting it. **Do not claim `generated_sql` proves the answer was computed.** What is now
+true, and is the honest version of the sentence: the engine *records* when its own figure is not
+one its query returned, and a corpus rule that filters on a column the data does not have is
+reported before an admin certifies it. Both are measurements, not guardrails — nothing refuses on
+either yet.
 
 **Say plainly, since 2026-08-19:** that an admin can certify a rule from the product and the next
 question uses it. That is now true in one process — it needed a restart until that date, which is

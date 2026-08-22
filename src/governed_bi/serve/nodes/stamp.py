@@ -17,6 +17,7 @@ from governed_bi.register.stages import ATTEMPT_CAP_REFUSED_BY, Outcome, Stage, 
 from governed_bi.serve.events import emit, rail_event_id
 from governed_bi.serve.ledger import answering_attempts, attempt_field, execution_from_attempts
 from governed_bi.serve.state import cleared
+from governed_bi.serve.structured_check import unsupported_headline_number
 
 __all__ = ["stamp"]
 
@@ -460,6 +461,22 @@ def stamp(state: Mapping[str, Any]) -> dict[str, Any]:
         # not a durable measured field) and for the same reason -- lives on the live answer,
         # stays out of ``record``.
         "reliability": _reliability(state),
+        # The headline figure this answer states, when the query that ran did not return it --
+        # `None` on every turn where it did, and on every turn that ran no query at all (that
+        # is `no_sql`, which is already named and already visible). Measured 2026-08-20: 2 of 8
+        # turns of one question published a number their own recorded SQL contradicts, with
+        # `generated_sql` present and the stamp reporting a data-backed answer, so no audit
+        # surface showed it. Same class as `answer_text` and `assumptions` above -- a fact about
+        # what the answer *says* against what the turn ran, computed here because `stamp` is the
+        # one node holding both, and kept off `record` for the reason ADR 0006 §11 gives.
+        #
+        # **Recorded, not acted on.** Nothing refuses or rewrites on it: the honest next step is
+        # a false-positive rate off real traffic (18 answers, 0 false positives, is a start and
+        # not a rate), and a check that changed answers before it had one would be trading a
+        # measured failure for an unmeasured one.
+        "unsupported_number": unsupported_headline_number(
+            state.get("answer_text"), state.get("result_table")
+        ),
     }
     # The turn's one ``final`` event (ADR 0010 §1). Emitted here because ``stamp`` is the one
     # node deliberately left unwrapped, so ``wrap.py``'s emitter never sees it. Emitted after

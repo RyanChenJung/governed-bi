@@ -88,6 +88,12 @@ def test_drafts_reports_a_draft_written_after_the_session_was_built(
         "summary": "what does abv mean? — alcohol by volume",
         "body": "Q: what does abv mean?\nA: alcohol by volume",
         "provenance_status": "proposed",
+        # Sixth field since 2026-08-20. Empty here, and empty is the normal case: a definition
+        # in plain language asserts no filter. See the route's own docstring for the certified
+        # rule that named a column which had never existed, and
+        # `tests/api/test_a_draft_that_filters_on_a_missing_column_says_so.py` for the
+        # non-empty side.
+        "unresolved_filters": [],
     }
 
 

@@ -598,6 +598,12 @@ export const draftRowSchema = z.object({
   summary: z.string(),
   body: z.string().nullable(),
   provenance_status: z.string().nullable(),
+  // Identifiers this draft asserts a filter on that no table or column in the corpus is
+  // named (`corpus/asserted_identifiers.py`, added 2026-08-20). Empty on every draft in
+  // every seeded corpus, so a non-empty list is a reason to read again before certifying --
+  // not a badge every card wears. `.default([])` because a server from before this field
+  // must not fail the parse and blank the whole approval queue.
+  unresolved_filters: z.array(z.string()).default([]),
 });
 
 export const draftListSchema = z.array(draftRowSchema);

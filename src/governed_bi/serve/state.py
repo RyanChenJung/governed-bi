@@ -242,6 +242,23 @@ class TurnEntry(TypedDict, total=False):
     #: filing. Always a list, never null, so "none stated" is a reading rather than a gap.
     assumptions: list[str]
 
+    #: The headline figure the answer stated, when the query that ran did not return it --
+    #: ``None`` on every turn where it did, and on every turn that ran no query (that case is
+    #: ``no_sql``, which the record already names). ``serve/structured_check.py::
+    #: unsupported_headline_number`` computes it and ``stamp`` puts it on the answer; here for
+    #: the same reason as ``assumptions`` above.
+    #:
+    #: **Added 2026-08-20, because the failure it names was the one no surface showed.** Two of
+    #: eight live turns of one question published a number their own recorded SQL contradicts:
+    #: *"There are **8,512** active apps"* with ``COUNT(*)`` (10,840) on the record, and
+    #: *"**10,840** app records"* with ``COUNT(DISTINCT app_name)`` (9,659) on the record. The
+    #: sibling failure -- reciting a certified constant with no query at all -- is visible from
+    #: ``no_sql`` and from the business-tier stamp's *"answered without consulting your data at
+    #: all"*. This one is not: ``generated_sql`` is present, the ledger is non-empty, and the
+    #: stamp reports a data-backed answer. So the durable field is what makes it countable, and
+    #: **nothing routes on it** -- the next step is a false-positive rate off real traffic.
+    unsupported_number: str | None
+
     #: What :func:`compact_turn_record` replaced on this row, ``{"dropped": [...], "was_bytes": n}``.
     #: Present on **every** archived row and absent only on the newest, so ``{"dropped": []}`` is a
     #: statement ("archived, nothing trimmed") and not a missing field. Lives on the envelope and

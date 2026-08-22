@@ -452,6 +452,11 @@ def record_node() -> Any:
                 # `list(... or [])` because the envelope promises a list and an older answer
                 # payload predates the key.
                 "assumptions": list(answer.get("assumptions") or []),
+                # Read off the answer for the same reason, and `None`-preserving rather than
+                # coerced: "the query returned this number" and "no query ran" are different
+                # facts, and collapsing them to a falsy value is how the second gets counted as
+                # the first.
+                "unsupported_number": answer.get("unsupported_number"),
             }
         except Exception:  # noqa: BLE001 — a turn that answered is not a turn that failed
             return {}

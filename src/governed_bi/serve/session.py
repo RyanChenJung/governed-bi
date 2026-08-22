@@ -19,6 +19,7 @@ from governed_bi.register.prompts import prompt_set_hash
 from governed_bi.register.prompts import select as selected_variants
 
 from ..corpus.analyst import for_analyst
+from ..corpus.asserted_identifiers import asserted_identifier_problems
 from ..corpus.hash import corpus_content_hash
 from ..corpus.schema import (
     Asset,
@@ -512,6 +513,10 @@ def from_assets(
     # which turns the excluded columns into `check()` refusals rather than silent absences.
     visible = _visible(assets)
     structure, structure_problems = build_structure(visible)
+    # Over `assets`, not `visible`: an asset asserting a filter on a column that does not exist
+    # is most worth seeing while someone is deciding whether to certify it, and anything
+    # awaiting that decision is withheld from `visible` by definition.
+    asserted_problems = asserted_identifier_problems(assets)
     entries = _index_entries(visible, structure)
     index = build_index(entries, embedder=embedder, vector_cache=vector_cache)
     knobs = _resolved_knobs(policy)
@@ -585,7 +590,7 @@ def from_assets(
         utility_model=utility_model,
         prompt_variants=dict(prompt_variants or {}),
         embedder=embedder,
-        problems=(*problems, *structure_problems),
+        problems=(*problems, *structure_problems, *asserted_problems),
         corpus_root=corpus_root,
     )
 

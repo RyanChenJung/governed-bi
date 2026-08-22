@@ -72,9 +72,27 @@ def make_drafts_router(session: Any) -> APIRouter:
         only its possibly-truncated ``summary``. ``schema``/``excluded`` are not returned --
         certifying a draft is not a browsing action, and the brief this route fixes names
         exactly five fields an admin needs to judge one: id, type, summary, body, status.
+
+        **A sixth field, added 2026-08-20, and it earns its place by a measurement.** A
+        certified correction read "exclude apps flagged delisted=true" against a schema with no
+        ``delisted`` column, and over 8 live turns of the question it governed, 3 declined the
+        rule and 1 claimed a filter it never applied. Nothing told the admin before they
+        certified it, and nothing could have: the only reader that knows which names exist is
+        the corpus itself. ``unresolved_filters`` is that check run against the draft in hand --
+        empty on every draft in every seeded corpus, so a non-empty list is a reason to read
+        again rather than a badge every card wears. ``corpus/asserted_identifiers.py`` carries
+        the false-positive counts behind that claim; the same problems also reach
+        ``/audit/corpus`` as degradations, which is the whole-corpus view rather than this
+        one-decision view.
         """
         from governed_bi.api.routes import _provenance_status
+        from governed_bi.corpus.asserted_identifiers import known_names, unresolved_predicates
 
+        assets = _reload_assets(session)
+        # Over every asset, not the proposed ones: the universe of legitimate names is the whole
+        # corpus, and building it from the approval queue alone would call every real column
+        # unresolved.
+        names = known_names(assets)
         rows = [
             {
                 "id": asset.id,
@@ -82,8 +100,11 @@ def make_drafts_router(session: Any) -> APIRouter:
                 "summary": asset.summary,
                 "body": asset.body,
                 "provenance_status": status,
+                "unresolved_filters": unresolved_predicates(
+                    f"{asset.summary or ''} {asset.body or ''}", names
+                ),
             }
-            for asset in _reload_assets(session)
+            for asset in assets
             if (status := _provenance_status(asset)) == "proposed"
         ]
         return sorted(rows, key=lambda r: r["id"])
