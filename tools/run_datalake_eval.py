@@ -150,6 +150,16 @@ def main(argv: list[str] | None = None) -> int:
         "enough at any concurrency",
     )
     parser.add_argument(
+        "--certify-corpus",
+        action="store_true",
+        help="serve the corpus as though its authored assets had been approved. For a "
+        "**benchmark** corpus only: ../BIRD-corpus's 5,938 terms, few-shots and metrics are all "
+        "`status: draft` from the harvest that built them, so without this an arm measures an "
+        "engine with no semantic layer -- a legitimate arm, and not the one the central claim is "
+        "about. In memory only; the corpus is not ours to restamp. Moves "
+        "`corpus_content_hash`, so the two arms cannot be merged.",
+    )
+    parser.add_argument(
         "--embed",
         action="store_true",
         help="build the index with an embedder. Costs ~420k embedding tokens (about $0.01) "
@@ -320,7 +330,9 @@ def main(argv: list[str] | None = None) -> int:
         # stages later when a node asks for text and silently gets the default.
         select(variants)
         session_kwargs["prompt_variants"] = variants
-    session = session_mod.from_corpus_dir(args.corpus_dir, **session_kwargs)
+    session = session_mod.from_corpus_dir(
+        args.corpus_dir, certify_authored=args.certify_corpus, **session_kwargs
+    )
     if args.prompt_variant:
         print(
             f"prompt variants: {session.prompt_variants} -> prompt_set_hash="
@@ -395,10 +407,16 @@ def main(argv: list[str] | None = None) -> int:
     # 2.3pp and 2.7pp (`measure.stats.mde`, n=1351). It was the one treatment input with no tag
     # segment and no readable row, so `--resume` could merge a pinned run into an unpinned one.
     pinned_tag = "_pinned" if args.replay_routing is not None else ""
+    # Same argument again, and here the two arms differ by more than any other segment in this
+    # tag: one serves 7,366 assets and the other 13,304. `corpus_content_hash` already moves
+    # (`corpus/provenance.py::measurement_corpus_hash`), so `--resume` refuses the mix on its
+    # own -- but `--out` bypasses the tag and the auto-named path is what most runs use, so the
+    # segment is what stops two arms landing in one file before any guard is consulted.
+    certified_tag = "_certified" if args.certify_corpus else ""
     tag = (
         f"{args.model}_{args.effort or 'default'}_top{args.top_n or 'default'}"
         f"_{'embed' if args.embed else 'lexical'}"
-        f"{provider_tag}{variant_tag}{reflect_tag}{abstain_tag}{pinned_tag}"
+        f"{provider_tag}{variant_tag}{reflect_tag}{abstain_tag}{pinned_tag}{certified_tag}"
     )
     out_path = args.out or pathlib.Path("runs/eval") / f"live_full_{tag}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)

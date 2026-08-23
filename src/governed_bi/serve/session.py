@@ -21,7 +21,11 @@ from governed_bi.register.prompts import select as selected_variants
 from ..corpus.analyst import for_analyst
 from ..corpus.asserted_identifiers import asserted_identifier_problems
 from ..corpus.hash import corpus_content_hash
-from ..corpus.provenance import withheld_as_uncertified
+from ..corpus.provenance import (
+    certified_for_measurement,
+    measurement_corpus_hash,
+    withheld_as_uncertified,
+)
 from ..corpus.schema import (
     Asset,
     AssetType,
@@ -619,16 +623,36 @@ def from_assets(
     )
 
 
-def from_corpus_dir(root: Path | str, *, schemas: Sequence[str] | None = None, **kwargs: Any) -> Session:
+def from_corpus_dir(
+    root: Path | str,
+    *,
+    schemas: Sequence[str] | None = None,
+    certify_authored: bool = False,
+    **kwargs: Any,
+) -> Session:
     """A session over a curated corpus on disk.
 
     ``schemas`` is the manifest, and passing one matters for more than scope: it restricts the
     content hash to the subtrees actually served, so a leftover subtree from another attempt
     enters neither the load nor the digest.
+
+    ``certify_authored`` serves a **benchmark** corpus as though its authored assets had been
+    approved, and moves the digest to say so. One caller — ``tools/run_datalake_eval.py
+    --certify-corpus`` — and it is a parameter here rather than five lines in that driver
+    because two constructions of "a session over a corpus dir" is the kind of second answer this
+    module exists to avoid. ``corpus/provenance.py::certified_for_measurement`` carries the
+    reasoning and the reason it is in memory only.
     """
     root = Path(root)
     assets, problems = load_corpus(root, schemas=schemas)
     digest = corpus_content_hash(root, schemas=schemas)
+    if certify_authored:
+        assets = certified_for_measurement(assets)
+        # **Before** `from_assets`, so the identity this session reports is the corpus it serves
+        # and not the one on disk. A run that restamped in memory and kept the tree's digest
+        # would put two arms under one treatment id, which is the defect `analyst_prompt`'s
+        # docstring records from the prompt-variant side.
+        digest = measurement_corpus_hash(digest)
     db_id = kwargs.pop("db_id", None) or (schemas[0] if schemas else root.name)
     return from_assets(
         assets, db_id=db_id, corpus_content_hash_=digest, problems=problems, corpus_root=root, **kwargs

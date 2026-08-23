@@ -17,13 +17,20 @@ other; keep both.
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, TypeVar
 
 from ..register.assets import AssetType
 from .schema import Asset, Audit, Governance, Provenance, ProvenanceSource, ProvenanceStatus
 
-__all__ = ["restamp_model_authored", "PROVENANCE_GATED", "withheld_as_uncertified"]
+__all__ = [
+    "restamp_model_authored",
+    "PROVENANCE_GATED",
+    "withheld_as_uncertified",
+    "certified_for_measurement",
+]
 
 A = TypeVar("A", bound=Asset)
 
@@ -99,3 +106,66 @@ def restamp_model_authored(
         evidence=asset.audit.evidence if asset.audit is not None else None,
     )
     return replace(asset, governance=Governance(), audit=audit)
+
+
+def certified_for_measurement(assets: Sequence[Asset]) -> list[Asset]:
+    """Every authored asset restamped ``certified``, for a **benchmark** corpus only.
+
+    **Why a measurement needs this at all.** ``../BIRD-corpus``'s 5,938 authored assets are all
+    ``status: draft`` — that is what the harvest that built them wrote, and nobody was ever going
+    to approve a benchmark fixture. Since 2026-08-19 the served path honours that stamp, so an
+    eval arm over it measures an engine with **no semantic layer**: 4,857 few-shots, 603 terms and
+    478 metrics withheld. That is a legitimate arm, and it is not the one this project's central
+    claim is about — "a populated semantic layer makes answers better" cannot be measured with the
+    semantic layer switched off, and every BIRD number published before that date was measured
+    with it on.
+
+    **In memory, never on disk.** The corpus is ``Minhao-Zhang/BIRD-corpus``; restamping 7,357
+    files there would answer a question about *our* measurement by editing *his* data, and the
+    next `git pull` would silently undo it.
+
+    **It is a treatment, so it has to move the treatment's identity** — see
+    :func:`measurement_corpus_hash`. Certifying in memory while still recording the on-disk
+    ``corpus_content_hash`` would produce two arms, serving two different corpora, reporting one
+    identity: the same defect ``serve/tools.py::analyst_prompt`` was written to stop, where a run
+    selecting a non-default prompt variant sent the default and recorded the override's hash.
+
+    Governance is untouched: an asset a human excluded stays excluded. Only the absence of an
+    approval is overridden, and only for types in :data:`PROVENANCE_GATED` — a structural asset's
+    provenance decides nothing, so restamping one would be noise in the digest.
+    """
+    out: list[Asset] = []
+    for asset in assets:
+        if getattr(asset, "asset_type", None) not in PROVENANCE_GATED:
+            out.append(asset)
+            continue
+        provenance = getattr(getattr(asset, "audit", None), "provenance", None)
+        if provenance is None or provenance.status is ProvenanceStatus.certified:
+            out.append(asset)
+            continue
+        audit = asset.audit
+        out.append(
+            replace(
+                asset,
+                audit=replace(
+                    audit, provenance=replace(provenance, status=ProvenanceStatus.certified)
+                ),
+            )
+        )
+    return out
+
+
+def measurement_corpus_hash(corpus_content_hash: str) -> str:
+    """The identity of a corpus served through :func:`certified_for_measurement`.
+
+    Derived rather than recomputed, because the tree on disk did not change and the thing that
+    did — which of its assets reach the model — is not a function of the bytes. Two arms over one
+    checkout now carry two identities, which is what every downstream guard already keys on:
+    ``--resume`` refuses the mix, ``measure/gates.py``'s drift gate sees two treatments, and a row
+    says which arm produced it without anyone having to remember.
+    """
+    digest = hashlib.sha256(f"{corpus_content_hash}\x1ecertified_for_measurement".encode())
+    # Full digest, not truncated: `corpus_content_hash` is a 64-char sha256, and a field that
+    # changes width between two arms of the same comparison is a shape nothing downstream should
+    # have to special-case.
+    return digest.hexdigest()
