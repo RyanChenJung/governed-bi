@@ -286,3 +286,119 @@ def test_a_missing_row_count_falls_back_to_the_rows_it_has() -> None:
     table = {"columns": ["c"], "rows": [["a"], ["b"], ["c"]]}
 
     assert unsupported_headline_number(answer, table) is None
+
+
+# ── digits that are not a quantity (2026-08-24) ───────────────────────────────
+#
+# Six flags on the two 120-question data-lake arms were the extractor reading a number out of a
+# *name*, and five of the six sat on answers the grader marked **correct**. Each case below is
+# verbatim from ``artifacts/paired_certified.jsonl`` or ``fp_probe_structure_only.jsonl``. This is
+# a different class from ``_echoes_an_input``: there the check had a real figure and no claim to
+# test, here there was never a figure.
+
+
+def test_a_year_inside_a_url_is_not_a_headline_figure() -> None:
+    """``The homepage address is **http://www.iscas2011.org/**`` — graded correct, flagged 2011."""
+    answer = "The homepage address is: **http://www.iscas2011.org/**"
+
+    assert unsupported_headline_number(answer, _table("http://www.iscas2011.org/")) is None
+
+
+def test_the_digits_in_an_identifier_are_not_a_headline_figure() -> None:
+    """``The employee ID is **F-C16315M**`` — graded correct, flagged 16315.
+
+    A letter against either end is the whole rule. It has to be *either*: the id here is
+    ``C16315M``, so the run is bounded by a letter on both sides, but a part number ``16315M``
+    would be bounded on one.
+    """
+    answer = "The employee ID is **F-C16315M**."
+
+    assert unsupported_headline_number(answer, _table("F-C16315M")) is None
+
+
+def test_a_series_number_in_a_title_is_skipped_for_the_figure_beside_it() -> None:
+    """``**_Cities of the Plain (The Border Trilogy #3)_**, with **5 orders**`` — flagged 3.
+
+    The scan reaching the next span is not the rejected "take the next bolded figure instead":
+    this span offers no candidate at all, so nothing is being chosen between. The figure the
+    answer actually asserts is 5, and testing *that* is the check doing its job.
+    """
+    answer = (
+        "The book with the most orders is **_Cities of the Plain (The Border Trilogy #3)_**, "
+        "with **5 orders**."
+    )
+
+    assert unsupported_headline_number(answer, _table(5)) is None
+    assert unsupported_headline_number(answer, _table(4)) == "5"
+
+
+def test_an_airline_code_is_not_a_headline_figure() -> None:
+    """``**Endeavor Air Inc.: 9E** — 789 flights`` … ``**1,918 more flights**`` — flagged 9.
+
+    Found by this fix rather than motivated by it, and it moves the check onto the real claim:
+    the answer's assertion is the 1,918 difference, which no cell holds and no row count is.
+    """
+    answer = (
+        "American Airlines Inc. operated more flights on 2018/8/1:\n\n"
+        "- **American Airlines Inc.: AA** — 2,707 flights\n"
+        "- **Endeavor Air Inc.: 9E** — 789 flights\n\n"
+        "American operated **1,918 more flights**."
+    )
+
+    assert unsupported_headline_number(answer, _table(2707, 789)) == "1,918"
+
+
+def test_a_gene_name_is_not_a_headline_figure() -> None:
+    """``**“Hypermethylation of the *TPEF/HPP1* Gene …”**`` — graded correct, flagged 1."""
+    answer = (
+        "The paper title is **“Hypermethylation of the *TPEF/HPP1* Gene in Primary and "
+        "Metastatic Colorectal Cancers.”**"
+    )
+
+    assert unsupported_headline_number(answer, _table("Hypermethylation of the TPEF/HPP1 Gene")) is None
+
+
+def test_a_minus_sign_the_answer_wrote_as_u2212_is_read_as_a_sign() -> None:
+    """``was **−30.22%** from 2010 to 2020`` — graded correct, flagged 30.22.
+
+    The pattern's ASCII-only sign dropped the character, so a correctly reported *decrease* was
+    compared as a positive against a negative cell and could never match. The failure is entirely
+    in the extractor: the answer, the query and the cell all agreed.
+    """
+    answer = (
+        "The population change for cities in **Arroyo** was **−30.22%** from 2010 to 2020."
+    )
+
+    assert unsupported_headline_number(answer, _table(-30.2154)) is None
+    assert unsupported_headline_number(answer, _table(30.2154)) == "−30.22"
+
+
+def test_a_currency_prefix_still_yields_the_figure() -> None:
+    """``**Overall total** | **$3,531.00**`` stays flagged, deliberately.
+
+    That arm's query returned the per-brand rows the total was summed from and not the sum, so
+    whether arithmetic over returned rows is grounded is an open judgement. A ``$`` added to
+    :func:`_is_a_quantity` would have closed it silently, in the direction of never asking.
+    """
+    answer = "| **Overall total** | **$3,531.00** |"
+
+    assert unsupported_headline_number(answer, _table(411.0, 1120.0)) == "3,531.00"
+
+
+def test_the_list_shaped_flags_all_survive() -> None:
+    """The regression guard: four true positives from the certified arm, one per shape.
+
+    Each is an answer narrating a list its recorded statement cannot produce — the class this
+    check was built to find. A tokeniser fix that quieted any of these would have traded the
+    finding for the false-positive rate.
+    """
+    cases = [
+        ("Vicky Hartzler’s district represented **43 counties**: AUDRAIN, BARTON", "43"),
+        ("The exact topic match returned **288 paper-author rows**, representing 67", "288"),
+        ("The results contain **214 book records** in British English.", "214"),
+        ("I found **46 distinct order dates**: - **2019:** 2019-12-27", "46"),
+    ]
+
+    assert [unsupported_headline_number(a, _table("x", "y")) for a, _ in cases] == [
+        expected for _, expected in cases
+    ]

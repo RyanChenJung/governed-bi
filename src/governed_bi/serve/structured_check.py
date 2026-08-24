@@ -48,8 +48,17 @@ def percentage_scale_suffix(question: str | None, sql: str | None) -> str:
 #: measured on 2026-08-20 did -- so this is where "the number this answer is asserting" lives.
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 
-#: A number as prose writes one, thousands separators included.
-_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+#: A number as prose writes one, thousands separators included. The sign matches U+2212 MINUS
+#: SIGN as well as ASCII hyphen, because the engine's own prose writes it: *"The population
+#: change ... was **-30.22%**"* (U+2212 in the answer) extracted as a *positive* 30.22 and was
+#: flagged against a cell holding -30.22 -- a graded-correct answer called unsupported over the
+#: character its own prose chose for the sign.
+_NUMBER_RE = re.compile(r"[-\u2212]?\d[\d,]*(?:\.\d+)?")
+
+#: A web address, removed from a span before any number is read out of it. *"The homepage address
+#: is **http://www.iscas2011.org/**"* is a graded-correct answer whose only digits are a year
+#: inside a domain name, and no result table has a reason to hold 2011.
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 
 
 def _as_float(value: object) -> float | None:
@@ -58,11 +67,34 @@ def _as_float(value: object) -> float | None:
     Strings are not a fallback case: a Postgres ``BIGINT`` comes back from ``SUM`` as ``str``,
     so a check that only looked at ``int``/``float`` cells would have called the one correctly
     grounded 167-billion answer unsupported.
+
+    U+2212 is folded to ASCII here and not only in :data:`_NUMBER_RE`, so every literal the
+    pattern now accepts is one this function can still parse. Two places that disagreed about
+    which characters spell a number would flag on the difference.
     """
     try:
-        return float(str(value).replace(",", ""))
+        return float(str(value).replace(",", "").replace("\u2212", "-"))
     except (TypeError, ValueError):
         return None
+
+
+def _is_a_quantity(match: re.Match[str]) -> bool:
+    """Do these digits denote an amount, or are they part of a name?
+
+    Two flags on the 2026-08-23 certified arm were the latter, both on answers the grader marked
+    **correct**: an employee id (*"The employee ID is **F-C16315M**"* -> 16315) and a series
+    number in a book title (*"**Cities of the Plain (The Border Trilogy #3)**"* -> 3). A letter
+    against either end makes the run part of an identifier; a leading ``#`` makes it a label.
+    Neither is a figure a result table could hold, so testing them is not a check, it is noise.
+
+    A ``$`` is deliberately **not** on this list. ``**$3,531.00**`` was also flagged on that arm,
+    and it is a real total the answer asserts while its query returned only the per-brand rows
+    the total was summed from. Whether arithmetic over returned rows counts as grounded is a
+    judgement this check has not made; suppressing it here would settle it silently.
+    """
+    before = match.string[: match.start()]
+    after = match.string[match.end() :]
+    return not (before.endswith("#") or before[-1:].isalpha() or after[:1].isalpha())
 
 
 def _headline(answer_text: str | None) -> str | None:
@@ -71,11 +103,18 @@ def _headline(answer_text: str | None) -> str | None:
     **First, not all of them**, and that is what keeps this quiet: ``"**4.19 out of 5**"`` also
     contains a 5, which no result table has any reason to hold. The figure being reported comes
     first in every real answer measured.
+
+    A span whose every digit run is a name contributes no candidate and the scan moves on -- which
+    is what it already did for a span holding no digits at all. That is not the "take the next
+    bolded figure instead" rule :func:`unsupported_headline_number` rejects: there the first span
+    held a real figure that happened to be an *input*, and preferring another would have been a
+    guess between two candidates. Here there was never a candidate.
     """
-    for span in _BOLD_RE.finditer(answer_text or ""):
-        match = _NUMBER_RE.search(span.group(1))
-        if match:
-            return match.group(0)
+    for bold in _BOLD_RE.finditer(answer_text or ""):
+        span = _URL_RE.sub(" ", bold.group(1))
+        for match in _NUMBER_RE.finditer(span):
+            if _is_a_quantity(match):
+                return match.group(0)
     return None
 
 
@@ -138,6 +177,22 @@ def unsupported_headline_number(
     reading was on answers of one form (*"There are **N** apps"*); the second is why a check is
     not shippable on the strength of the sample that motivated it.
     ``~/Antigravity/experiments/010_stated-assumptions-channel/`` has both artifacts.
+
+    **Third reading, 2026-08-24, rescored offline over both arms with the tables rebuilt from
+    each row's own ``generated_sql``.** The certified arm went 10 flags to 6 out of 95 answered
+    turns; four of the ten were :func:`_is_a_quantity`'s and :data:`_URL_RE`'s, on answers the
+    grader marked correct. What survives sorts into three shapes and only one is a defect this
+    check can claim:
+
+    * **six list-shaped**, the class it was built for — an answer narrating a list its recorded
+      statement cannot produce (*"represented **43 counties**"* beside a ``LIMIT 1``);
+    * **four derived** — a sum, a difference or a ``× 100`` over cells the query *did* return
+      (*"**$3,531.00**"* over per-brand rows; *"**15.82%**"* over a returned ``0.158203125``).
+      Whether arithmetic on returned rows is grounded is a judgement this check has not made, and
+      searching the table for combinations to rule it out risks a false negative on the recited
+      constant it exists to catch;
+    * **one coordinate** the record does not hold — the statement compared against
+      ``38.566129`` and the answer printed ``38.566128``, which no returned column carries.
     """
     literal = _headline(answer_text)
     if literal is None:
