@@ -78,7 +78,7 @@ def _abstained_fingerprint(
 
 
 def _attempt_trace(execution: Any) -> list[dict[str, Any]]:
-    """Per-attempt ``(layer, reason_code, passed)`` for the measurement row.
+    """Per-attempt ``(layer, reason_code, passed, path, executed_sql)`` for the measurement row.
 
     ``CheckVerdict`` has carried ``failed_layer`` and ``reason_code`` all along and they
     stopped at the turn record, so a refused row in an artifact said *that* governance
@@ -86,6 +86,21 @@ def _attempt_trace(execution: Any) -> list[dict[str, Any]]:
     every refused statement through ``check()`` offline to learn that 18 of 21 were
     ``r_table_not_licensed`` — a retrieval failure the analysis had attributed to a
     guardrail false-positive. The field that would have said so already existed.
+
+    **``executed_sql`` for the same reason, added 2026-08-24.** The turn record keeps every
+    statement the engine sent (``govern/ledger.py::AttemptRecord``); this projection kept the
+    *count* and dropped the statements, and ``generated_sql`` is only the **last** one
+    (``serve/nodes/agent_core.py::_last_executed_sql``, deliberately — two callers execute it).
+    So an artifact said five statements passed and could show what one of them was.
+
+    That is not an abstract gap. On the two 120-question arms, rows with more than one passing
+    ``agent`` statement scored **0/18** and **1/15** exact-match, against 51.3% and 68.1% for
+    single-statement rows — and adjudicating *why* meant reading answer prose against a
+    ``generated_sql`` that was, on one of them, a ``LIMIT 1`` probe beside an answer correctly
+    listing 43 counties. The shape (a list question answered by collapsing the list into a
+    ``STRING_AGG`` cell, or by probing its tail) was only nameable because those two arms happen
+    to be small enough to read by hand. ADR 0006 §11 keeps result rows and prose off the durable
+    record; a statement is neither, and ``generated_sql`` is already on this row.
     """
     if not isinstance(execution, Mapping):
         return []
@@ -99,6 +114,10 @@ def _attempt_trace(execution: Any) -> list[dict[str, Any]]:
                 "reason_code": attempt.get("reason_code"),
                 "passed": attempt.get("passed"),
                 "path": attempt.get("path"),
+                # ``None`` on a refused attempt, which is what the ledger already records for
+                # one: nothing was sent. Distinguishable from a missing key by absence of the
+                # field, which only pre-2026-08-24 artifacts have.
+                "executed_sql": attempt.get("executed_sql"),
             }
         )
     return trace

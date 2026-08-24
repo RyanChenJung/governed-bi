@@ -324,17 +324,24 @@ def test_a_measured_row_says_which_layer_refused_each_attempt(tmp_path: Path) ->
     )
     trace = {str(r["question_id"]): r["attempts"] for r in rows}
 
+    # `executed_sql` is null on both refusals for the same reason the layer is named: nothing
+    # was sent, and that is the fact an auditor most needs to tell apart from an execution.
     assert trace["unlicensed"] == [
         {"layer": "TABLES", "reason_code": "r_table_not_licensed", "passed": False,
-         "path": "agent"}
+         "path": "agent", "executed_sql": None}
     ], trace["unlicensed"]
     assert trace["not_a_read"] == [
-        {"layer": "NO_WRITE", "reason_code": "r_not_a_read", "passed": False, "path": "agent"}
+        {"layer": "NO_WRITE", "reason_code": "r_not_a_read", "passed": False, "path": "agent",
+         "executed_sql": None}
     ], trace["not_a_read"]
     # The passing attempt, so the field is not just a list of refusals: a turn that answered
-    # still says how it got there, and `layer` is null because no layer objected.
+    # still says how it got there, `layer` is null because no layer objected, and the statement is
+    # the one `prepare()` produced rather than the one the model proposed: this arm asked for
+    # `SELECT 999 AS n` and the row carries the `LIMIT 200001` that `apply_row_limit` appended.
+    # That difference is why the trace reads the ledger and not the tool-call arguments.
     assert trace["no_table"] == [
-        {"layer": None, "reason_code": "passed", "passed": True, "path": "agent"}
+        {"layer": None, "reason_code": "passed", "passed": True, "path": "agent",
+         "executed_sql": "SELECT 999 AS n LIMIT 200001"}
     ], trace["no_table"]
 
 
