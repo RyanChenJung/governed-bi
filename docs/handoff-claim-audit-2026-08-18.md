@@ -378,7 +378,69 @@ were simply never approved — approving them is what the product's own workflow
 
 ---
 
+## Measured 2026-08-23 — the semantic layer is worth +19.3 points, and it had never been measured
+
+**This is the claim the product is sold on**, and until today it had no number. Full method and
+artifacts: `~/Antigravity/experiments/010_stated-assumptions-channel/` §7–§8.
+
+**Why it had none, and it was a fork problem rather than a hard one.** `../BIRD-corpus`'s 5,938
+authored assets — 4,857 few-shots, 603 terms, 478 metrics — are all `status: draft`, which is what
+the harvest that built them wrote; nobody was ever going to approve a benchmark fixture. Since
+2026-08-19 the served path honours that stamp, so **every arm over the data lake was measuring an
+engine with no semantic layer at all**, and reporting nothing about it. `--certify-corpus` serves
+them as approved in memory, moves `corpus_content_hash` so two arms cannot be merged, and never
+touches the corpus repo (it is `Minhao-Zhang/BIRD-corpus`).
+
+Same 120 questions, same model (`gpt-5.6-luna`), same everything else, through the repo's own
+paired test:
+
+```
++ semantic layer - structure only: 0.1933 (p=0.0001, n=119, discordant=35, MDE=0.1393)
+```
+
+| | correct | answered | refused |
+|---|---|---|---|
+| structure only | 40 / 119 — **33.6%** | 82 | 2 |
+| + semantic layer | 63 / 119 — **52.9%** | 95 | 0 |
+
+29 questions the layer got right that structure alone got wrong, 6 the other way. **The delta
+clears this comparison's own minimum detectable effect (13.9), so it is decisive by this project's
+stated standard and not only by a p-value.** Refusals 2 → 0 and answered 82 → 95: most of the gain
+is questions the engine could not attempt without the definitions.
+
+Quote it with the caveats attached: n=119, one model, one split, the first 120 questions of
+`test_final.jsonl` rather than a random sample. One arm, not a published rate.
+
+**And the grounding check's real signal turns out to be paging, not recitation.** Rescored on both
+arms with the same shipped version, its flag rate goes 9.1% → 20.4% with the layer on — the
+structure-only arm being the noise floor. Adjudicating the 10: **3 real, 7 false (precision 30%).**
+All three real ones, and §6's survivor, are one shape: **the engine pages a result set, narrates
+the whole list, and only the final page reaches `generated_sql`** — a record showing 3, 6, 7 or 14
+rows beside an answer asserting 43, 46, 288 or 74. Four instances across two arms. That is a
+systematic hole in the audit trail and it is **not** the 8,512 mechanism, so "the answer is not
+supported by the statement on the record" now has two named causes and the second is the common
+one.
+
+Five of the seven false positives are extraction bugs rather than judgement calls — a number
+pulled out of a bolded URL, employee id, book title or coordinate, and a Unicode minus sign. Cheap
+and unambiguous to fix; deliberately not fixed, because work on this check was closed and
+reopening it is a decision.
+
+**Two defects found by running this, recorded and not fixed.** Ten `metric` assets in
+`../BIRD-corpus` carry a bare column name where an asset id belongs — invisible for as long as the
+metrics were withheld, and Minhao's data to correct. And one question hung for **eleven hours**:
+`lsof` showed two sockets to the model provider in state `CLOSED`, so the remote had hung up and
+the client never noticed. `--timeout` is a per-request bound on the model client and did not fire,
+which is the failure its own help text says it exists to prevent. Closing it needs TCP keepalive or
+a socket read deadline in the provider client — a change to how every arm talks to every model.
+
+---
+
 ## What to say when handing this over
+
+**Say, with the caveats attached, since 2026-08-23:** that the semantic layer is worth **+19.3
+points of exact match** (33.6% → 52.9%, p=0.0001, n=119, decisive against its own MDE). One model,
+one split, one arm. It is the first measurement of the sentence this product is sold on.
 
 **Say:** it refuses rather than guessing, and says so in plain language naming what it can see;
 a reader can report a wrong answer; an admin can turn that into a certified rule from the
