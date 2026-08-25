@@ -42,7 +42,7 @@ from governed_bi.serve.ledger import (
 from governed_bi.serve.resume import ResumeRejected, authorise_resume
 from governed_bi.serve.runtime import bool_knob, configurable, prompt_variants
 from governed_bi.serve.schema_term_guard import find_schema_leak
-from governed_bi.serve.structured_check import percentage_scale_suffix
+from governed_bi.serve.structured_check import collapsed_list_suffix, percentage_scale_suffix
 
 __all__ = [
     "analyst_prompt",
@@ -476,10 +476,15 @@ def build_tools(
             )
         _emit_attempt(runtime, attempt, number=attempt_number, payload=payload)
         table = _result_table(payload)
+        # G4 (ADR 0006): both checks read what was **executed**, not what the model asked for.
+        executed = attempt_field(attempt, "executed_sql")
         suffix = ""
         if bool_knob(state, "enable_structured_percentage_check"):
-            # G4 (ADR 0006): check what was executed, not what the model asked for.
-            suffix = percentage_scale_suffix(state.get("question"), attempt_field(attempt, "executed_sql"))
+            suffix = percentage_scale_suffix(state.get("question"), executed)
+        if bool_knob(state, "enable_structured_collapse_check"):
+            # Appended, not assigned: the two checks are independent and a statement can be
+            # both an unscaled ratio and a collapsed list. Each returns "" when it has nothing.
+            suffix += collapsed_list_suffix(executed)
         return _reply(
             runtime,
             payload + suffix,

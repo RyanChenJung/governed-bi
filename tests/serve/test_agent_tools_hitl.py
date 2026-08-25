@@ -696,3 +696,75 @@ def test_the_ledger_survives_the_interrupt() -> None:
         "rows -- and the recovered one carried the current turn_id rather than its own."
     )
 
+
+def test_the_structured_checks_are_knob_gated_and_compose(tmp_path: Path) -> None:
+    """Both suffixes reach the model, and neither replaces the other.
+
+    ``_run_query`` used to assign ``suffix = percentage_scale_suffix(...)``; the collapse check
+    (2026-08-24) appends to it. Assignment there would have silently disabled whichever ran
+    second, and a check that is off while its knob reads ``true`` is worse than one that is off —
+    the artifact would record a treatment the turn did not receive, which is the defect
+    :func:`~governed_bi.serve.tools.analyst_prompt` exists to document on the prompt side.
+
+    One statement trips both: a ``GROUP_CONCAT`` (so the list is collapsed) with no ``* 100`` (so
+    a percentage question is unscaled). Contrived on purpose — the point is that two independent
+    checks on one statement both arrive.
+
+    **The statement passes governance and then fails to execute**, and that is the right seam
+    rather than a flaw in the fixture. Both checks read ``attempt_field(attempt, "executed_sql")``,
+    and ``fetch.py`` records the attempt *"even though the execution failed ... it passed every
+    layer and was sent to the database, so it is a governed statement and the ledger owes it a
+    row"*. The sqlite fixture has no ``sales`` schema to answer the licensed name with — there is
+    no ATTACH support in ``SqliteConnector`` — so this is as far as a tool-body test reaches, and
+    it is past the line under test.
+    """
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE customers (id INTEGER, name TEXT)")
+    conn.executemany("INSERT INTO customers VALUES (?, ?)", [(1, "a"), (2, "b")])
+    conn.commit()
+    conn.close()
+    from governed_bi.datasource.sqlite import SqliteConnector
+
+    connector = SqliteConnector(db)
+    connector._connect()  # noqa: SLF001
+    sql = "SELECT GROUP_CONCAT(id) AS ids FROM sales.customers"
+    licensed = ["sales.customers", "customers"]
+    question = "what percentage of customers are named a"
+
+    def reply(**overrides: Any) -> tuple[str, dict[str, Any]]:
+        overrides.setdefault("licensed", licensed)
+        return _call(
+            _tools(_state(question=question, **overrides),
+                   _config(connector=connector))["run_query"],
+            sql=sql,
+        )
+
+    off, update = reply()
+    assert "structured check" not in off, "both knobs default off; neither may speak"
+    (attempt,) = (update.get("attempts_by_call") or {}).values()
+    assert attempt["executed_sql"], (
+        "precondition: the statement passed every layer and was sent, so the ledger holds it "
+        "and both checks have something to read"
+    )
+
+    both, _ = reply(enable_structured_percentage_check=True,
+                    enable_structured_collapse_check=True)
+    assert "PERCENTAGE" in both, "the percentage check was dropped by the append"
+    assert "one row per value" in both, "the collapse check never arrived"
+    assert both.count("[structured check]") == 2
+
+    collapse_only, _ = reply(enable_structured_collapse_check=True)
+    assert "PERCENTAGE" not in collapse_only
+    assert "one row per value" in collapse_only
+
+    # A statement that never *ran* leaves no ``executed_sql``, so this check has no shape to look
+    # at and says nothing — while the percentage check still fires, because "no SQL to scan for a
+    # scaling factor" is not evidence of one. Two checks, two deliberate answers to what absence
+    # means: this one reads the shape of a statement that was actually sent.
+    refused, update = reply(enable_structured_percentage_check=True,
+                            enable_structured_collapse_check=True,
+                            licensed=["sales.other"])
+    assert "refused" in refused.lower()
+    assert "PERCENTAGE" in refused
+    assert "one row per value" not in refused

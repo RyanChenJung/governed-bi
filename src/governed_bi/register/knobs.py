@@ -323,6 +323,15 @@ KNOB_REGISTER: tuple[Knob, ...] = (
        "(ported from v1's DetentAI-line finding: Experiment 006 K2-c, a percentage "
        "question answered as a 0-1 ratio). Off by default because it changes what "
        "the model sees, so a run with it on is not comparable to one without"),
+    _k("enable_structured_collapse_check", False, Role.comparability,
+       "flags a run_query statement whose outermost projection concatenates every row into one "
+       "cell (STRING_AGG/GROUP_CONCAT/ARRAY_AGG with no GROUP BY), which is how this engine "
+       "answers 'list all X' -- and why turns running more than one passing statement scored "
+       "0/18 and 1/15 exact match on the 2026-08-24 arms against 51.3% and 68.1% for "
+       "single-statement turns. Measured before shipping: fires on 7 of the 202 recorded "
+       "statements there, none of them graded correct. Off by default for the same reason as "
+       "the check above -- it changes what the model sees, so a run with it on is not comparable "
+       "to one without"),
     _k("enable_clarification_to_draft", False, Role.operational,
        "an answered (not declined) live clarification is mined into a TermAsset draft "
        "(curator/clarification.py), written proposed and withheld from the served set until an "

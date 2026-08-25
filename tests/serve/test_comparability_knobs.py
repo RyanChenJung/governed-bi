@@ -65,6 +65,15 @@ def test_bool_knob_same_precedence_as_int_knob() -> None:
                       "enable_structured_percentage_check") is True
 
 
+def test_the_collapse_check_is_off_by_default_like_its_sibling() -> None:
+    """`enable_structured_collapse_check` (2026-08-24) is a comparability knob, so its default
+    decides whether a historical arm is comparable to a new one. Both structured checks change
+    what the model sees, so both are off unless an arm asks for them."""
+    assert bool_knob({}, "enable_structured_collapse_check") is False
+    assert bool_knob({"enable_structured_collapse_check": True},
+                     "enable_structured_collapse_check") is True
+
+
 def test_bool_knob_reads_the_two_json_spellings_and_refuses_anything_else() -> None:
     """The danger is ``bool("false") is True``, not strings as such.
 

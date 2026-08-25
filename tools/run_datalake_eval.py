@@ -141,6 +141,18 @@ def main(argv: list[str] | None = None) -> int:
         "committing one are two arms -- and a resume that merged them would report the "
         "coverage of one with the accuracy of the other.",
     )
+    parser.add_argument(
+        "--collapse-check",
+        action="store_true",
+        help="turn on the collapsed-list structured check (enable_structured_collapse_check). "
+        "When a run_query statement concatenates every row into one cell "
+        "(STRING_AGG/GROUP_CONCAT/ARRAY_AGG with no GROUP BY) the tool reply says so, and the "
+        "model still has its remaining attempts. That shape is how this engine answers 'list all "
+        "X', and it is why turns running more than one passing statement scored 0/18 and 1/15 "
+        "exact match on the 2026-08-24 arms against 51.3%% and 68.1%% for single-statement turns. "
+        "Costs no model call. It is a comparability knob and enters the artifact tag, because it "
+        "changes what the model sees and a nudged arm is not the same arm.",
+    )
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument(
         "--max-retries",
@@ -413,10 +425,18 @@ def main(argv: list[str] | None = None) -> int:
     # own -- but `--out` bypasses the tag and the auto-named path is what most runs use, so the
     # segment is what stops two arms landing in one file before any guard is consulted.
     certified_tag = "_certified" if args.certify_corpus else ""
+    # The same argument once more, and the reason it is not skippable for a *nudge*: the check
+    # appends a sentence to a tool reply, so the model's next attempt is conditioned on text an
+    # unnudged arm never saw. Two arms, and the difference is invisible in every hash the resume
+    # guard compares -- `knobs_resolved` moves, and that is what `comparability_keys` checks, but
+    # the auto-named path is what most runs use and the segment is what stops the mix before any
+    # guard is consulted.
+    collapse_tag = "_collapse" if args.collapse_check else ""
     tag = (
         f"{args.model}_{args.effort or 'default'}_top{args.top_n or 'default'}"
         f"_{'embed' if args.embed else 'lexical'}"
         f"{provider_tag}{variant_tag}{reflect_tag}{abstain_tag}{pinned_tag}{certified_tag}"
+        f"{collapse_tag}"
     )
     out_path = args.out or pathlib.Path("runs/eval") / f"live_full_{tag}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,6 +502,8 @@ def main(argv: list[str] | None = None) -> int:
         knob_overrides["reflect_enabled"] = True
     if args.abstain:
         knob_overrides["abstention_policy_enabled"] = True
+    if args.collapse_check:
+        knob_overrides["enable_structured_collapse_check"] = True
     run_knobs = {**session.knobs_resolved, **knob_overrides}
 
     done: set[str] = set()

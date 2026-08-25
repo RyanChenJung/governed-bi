@@ -15,7 +15,13 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["percentage_scale_suffix", "unsupported_headline_number"]
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
+
+from governed_bi.govern.policy import DEFAULT_DIALECT
+
+__all__ = ["collapsed_list_suffix", "percentage_scale_suffix", "unsupported_headline_number"]
 
 # Matches "X * 100" and "100 * X" (the first version of this check, tested only as a
 # throwaway eval script, matched only the former and over-triggered on already-correct
@@ -41,6 +47,81 @@ def percentage_scale_suffix(question: str | None, sql: str | None) -> str:
         "but your query's final result does not appear to be scaled by 100 (no `* 100` "
         "or `/ 100`-style factor found). If your query computes a 0-1 ratio, multiply "
         "the final value by 100."
+    )
+
+
+#: The aggregates that turn many rows into one cell. ``STRING_AGG`` and ``GROUP_CONCAT`` are one
+#: class to sqlglot whatever the dialect spells them, which is why this is a parse and not a
+#: regex over the text.
+_COLLAPSING_AGGREGATES = (exp.ArrayAgg, exp.GroupConcat)
+
+
+def _collapses_its_rows(sql: str) -> bool:
+    """Does this statement's outermost projection reduce every row to one cell?
+
+    A ``GROUP BY`` disqualifies it: there the aggregate produces one row *per group*, which is a
+    real answer shape ("the aliases for each zip code"). Without one it produces exactly one row
+    however many values it found.
+
+    Returns ``False`` on a statement sqlglot cannot parse, rather than raising. The parse layer
+    has already accepted anything that reaches here -- ``prepare()`` runs before execution -- so a
+    failure here means the two disagree, and a nudge is not worth ending a turn over.
+    """
+    try:
+        tree = sqlglot.parse_one(sql, dialect=DEFAULT_DIALECT)
+    except SqlglotError:
+        return False
+    if not isinstance(tree, exp.Select) or tree.args.get("group"):
+        return False
+    return any(
+        isinstance(node, _COLLAPSING_AGGREGATES)
+        for projection in tree.expressions
+        for node in projection.walk()
+    )
+
+
+def collapsed_list_suffix(sql: str | None) -> str:
+    """Flag a statement that answers a list question by concatenating the list into one cell.
+
+    **The failure, measured 2026-08-24 over two archived 120-question arms.** Rows whose turn ran
+    more than one passing ``agent`` statement scored **0/18** and **1/15** exact match, against
+    51.3% and 68.1% for single-statement rows. Reading all 15: the engine answers *"list all X"*
+    by wrapping the correct query in a string aggregate, so a question whose gold returns 242 rows
+    of one column gets a statement returning one row of one cell holding all 242 values. The prose
+    answer is frequently right -- ``train_5154`` lists every area code correctly -- and exact match
+    compares result sets, so it scores zero. Three of the shapes, verbatim:
+
+    * ``SELECT COUNT(*), STRING_AGG(CAST("area_code" AS TEXT), ', ' ORDER BY ...) FROM (SELECT
+      DISTINCT ...)`` -- the correct query, wrapped
+    * ``SELECT STRING_AGG(d."Description", ' | ' ORDER BY ...) FROM (SELECT DISTINCT ...)``
+    * ``SELECT STRING_AGG("l"."titulo", e'\n' ORDER BY ...) FROM "books"."libro" AS "l" ...``
+
+    **Measured before shipping, on the statements themselves.** Over the 202 recorded statements
+    in those two arms this fires on **7, none of them graded correct** -- a 3.5% trigger rate and
+    no observed false positive. It takes no question text for that reason: adding a "does the
+    question ask for a list" condition could only shrink an already-empty false-positive set while
+    adding a way to miss.
+
+    **The other half of the shape is deliberately not here.** The same defect also appears as a
+    tail probe -- ``train_5120`` lists all 43 counties beside a recorded ``... ORDER BY "county"
+    LIMIT 1`` -- and a rule against that is not shippable: ``LIMIT 1`` ends 10 of 119 statements on
+    the certified arm and **5 of those are correct**, because it is also how you answer *"which has
+    the most X"*. 50% false positives on a nudge that tells the model to rewrite a right query is
+    worse than the defect. Recorded in
+    ``~/Antigravity/experiments/010_stated-assumptions-channel/`` §9d, not fixed.
+
+    Advice, not a refusal: returns ``""`` (no-op) when the shape is absent, and callers append the
+    result to the tool reply text unconditionally -- the same contract as
+    :func:`percentage_scale_suffix`. The model keeps its remaining attempts and may ignore it.
+    """
+    if not sql or not _collapses_its_rows(sql):
+        return ""
+    return (
+        "\n\n[structured check] this query concatenates its rows into a SINGLE cell "
+        "(a `STRING_AGG`/`GROUP_CONCAT`/`ARRAY_AGG` with no `GROUP BY`), so its result is one "
+        "row no matter how many values it found. If the question asks *which* or *what* values "
+        "-- a list -- return one row per value instead and let the result table carry them. "
+        "Concatenating hides them from every reader of the result but you."
     )
 
 
