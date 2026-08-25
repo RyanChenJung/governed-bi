@@ -216,7 +216,7 @@ MUTATIONS_DATA_1: tuple[Mutation, ...] = (
         what="a swallowed layer exception records as refused, not crashed",
         path="src/governed_bi/serve/nodes/stamp.py",
         anchor="""            if isinstance(errors, int) and errors > 0:
-                return GUARDRAIL_ERROR, Stage.check.value, None, None, False
+                return GUARDRAIL_ERROR, Stage.check.value, None, None, False, terminal
 """,
         replacement="",
         tests=("tests/serve/test_a_swallowed_layer_exception_is_a_crash.py",),

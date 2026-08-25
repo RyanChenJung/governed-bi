@@ -40,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
         "check_one_implementation.py",
         "check_measurement_locality.py",
         "check_no_benchmark_discriminators.py",
+        "check_mutation_anchors.py",
     ],
 )
 def test_lint_gate_passes_on_a_clean_tree(tool: str) -> None:
@@ -582,3 +583,58 @@ def test_measurement_locality_gate_fires_on_formatting_outside_quantity(
     assert PROBE_NAME in result.stderr
 
 
+
+
+def test_the_mutation_anchor_gate_names_the_entry_a_refactor_stranded(tmp_path: Path) -> None:
+    """The 2026-08-19 failure, reproduced: one entry's anchor moves and the gate says which.
+
+    ``69be101`` split ``project_turn``'s row-shaping out of ``eval/harness.py`` into
+    ``eval/projection.py``. Nine catalogue entries kept the old ``path`` while every anchor moved
+    byte for byte into the new file, and a tenth drifted when ``stamp.py``'s guardrail tuple grew
+    a field. The nightly ``mutate`` job reported all ten as **SURVIVED** — correctly, since a
+    stale entry proves nothing — and a survivor is also exactly what a real coverage hole looks
+    like. Six days of a red X that could not be told from the emergency it announces.
+
+    **The whole tree is mirrored and exactly one file is broken**, rather than pointing the gate
+    at an empty directory. An empty root fails too, but it cannot distinguish a gate that names
+    the stranded entry from one that fails whenever anything is missing — and naming it is the
+    entire value here, since the fix is per-entry.
+
+    ``s39-attempt-trace-empty`` is the victim because it is one of the nine, and because its
+    anchor is the line that carries the per-attempt trace into a measurement row.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    from mutation_catalogue import MUTATIONS
+
+    (victim,) = [m for m in MUTATIONS if m.id == "s39-attempt-trace-empty"]
+
+    root = tmp_path / "mirror"
+    for mutation in MUTATIONS:
+        destination = root / mutation.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            (ROOT / mutation.path).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+    baseline = _gate("check_mutation_anchors.py", "--root", str(root))
+    assert baseline.returncode == 0, (
+        "precondition: the mirror is faithful, so the failure below comes from the break and "
+        f"not from the copy. {baseline.stderr}"
+    )
+
+    stranded = root / victim.path
+    stranded.write_text(
+        stranded.read_text(encoding="utf-8").replace(victim.anchor, "", 1), encoding="utf-8"
+    )
+
+    result = _gate("check_mutation_anchors.py", "--root", str(root))
+
+    assert result.returncode == 1
+    assert victim.id in result.stderr
+    assert "1 declared mutation(s)" in result.stderr, (
+        f"the gate must name the one stranded entry, not fail wholesale: {result.stderr}"
+    )
+    assert "do NOT delete the entry" in result.stderr, (
+        "the remedy matters: deleting the entry would retire an invariant as a side effect of a "
+        "refactor, which is the cheapest way to make this gate green and the worst"
+    )

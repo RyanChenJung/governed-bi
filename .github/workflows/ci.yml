@@ -79,6 +79,15 @@ jobs:
       - name: Gate — import layering
         run: uv run --frozen python tools/check_imports.py
 
+      # Read-only, and here rather than in the nightly `mutate` job on purpose. `mutate` runs on
+      # `schedule` only, so a refactor that strands a catalogue anchor is green on the commit that
+      # caused it and red the next morning on a run whose head is some later commit -- and it
+      # reports the stale entry as SURVIVED, which is what a real coverage hole looks like. That
+      # happened for six days from 2026-08-19 (`69be101` split `eval/harness.py`, nine entries
+      # kept the old path). This step fails on the push that moved the code.
+      - name: Gate — mutation anchors still exist
+        run: uv run --frozen python tools/check_mutation_anchors.py
+
       - name: Gate — no retired claims in live code
         run: uv run --frozen python tools/check_citations.py
 
