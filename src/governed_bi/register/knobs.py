@@ -329,9 +329,12 @@ KNOB_REGISTER: tuple[Knob, ...] = (
        "answers 'list all X' -- and why turns running more than one passing statement scored "
        "0/18 and 1/15 exact match on the 2026-08-24 arms against 51.3% and 68.1% for "
        "single-statement turns. Measured before shipping: fires on 7 of the 202 recorded "
-       "statements there, none of them graded correct. Off by default for the same reason as "
-       "the check above -- it changes what the model sees, so a run with it on is not comparable "
-       "to one without"),
+       "statements there, none of them graded correct. **Priced 2026-08-24 and it does not "
+       "work**: over a paired arm on the 26 candidate questions the nudge fired 5 times and the "
+       "model rewrote 0 of them, each with 1-3 of 5 attempts still unused, against a control that "
+       "rewrote 0 of 7 unprompted. Off by default for that measured reason, and additionally for "
+       "the same reason as the check above -- it changes what the model sees, so a run with it on "
+       "is not comparable to one without"),
     _k("enable_clarification_to_draft", False, Role.operational,
        "an answered (not declined) live clarification is mined into a TermAsset draft "
        "(curator/clarification.py), written proposed and withheld from the served set until an "

@@ -113,6 +113,29 @@ def collapsed_list_suffix(sql: str | None) -> str:
     Advice, not a refusal: returns ``""`` (no-op) when the shape is absent, and callers append the
     result to the tool reply text unconditionally -- the same contract as
     :func:`percentage_scale_suffix`. The model keeps its remaining attempts and may ignore it.
+
+    **It does ignore it. Measured 2026-08-24, and this rule is precise and ineffective.** A paired
+    arm over the 26 candidate questions (`--collapse-check` against a control, identical in every
+    recorded knob including ``corpus_content_hash`` and ``prompt_set_hash``) says:
+
+    * the nudge fired on **5** rows; the model rewrote on **0** of them. In all five the
+      collapsing statement is still the *last* one executed;
+    * **not an attempt-cap artifact**: all five ended ``answered`` having used 2-4 of
+      ``run_query_attempt_cap``'s 5 slots, so each had 1-3 attempts left and answered anyway;
+    * the control's unprompted rewrite rate is **0 of 7**, so there was nothing to subtract and
+      nothing was added;
+    * exact match 9/26 -> 7/26, which is variance: all four correctness flips and all five
+      non-``answered`` outcomes sit on rows where no statement collapsed, so the nudge could not
+      have touched them. 4 of 26 flipping on untouchable rows is this set's noise floor.
+
+    So the knob stays off by default with a measured reason rather than a caution, and the
+    function stays because it *identifies* the defect correctly -- what fails is asking. That is
+    now the second thing at the tell-the-model altitude to fail on this stack against a diagnosed
+    gap; §1 of ``~/Antigravity/experiments/010_stated-assumptions-channel/`` is the first, a prompt
+    paragraph. What is left is refusing the statement rather than advising against it, which
+    changes what the engine may *run* and is a decision with a real false-positive cost -- a
+    ``GROUP BY``-less ``STRING_AGG`` is sometimes exactly what a reader asked for. §9e has the
+    artifacts.
     """
     if not sql or not _collapses_its_rows(sql):
         return ""
