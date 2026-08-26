@@ -190,6 +190,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--per-schema", type=int, default=None, help="cap questions per schema")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
+        "--only-ids",
+        type=pathlib.Path,
+        default=None,
+        help="a file of question ids, one per line (`#` comments and blanks ignored). Runs "
+        "exactly that set and RAISES on an id the dataset does not carry -- a named population "
+        "that silently comes back short is the defect this repository keeps finding in its own "
+        "measurements. Ignores --per-schema for the same reason. Use it when the arm's question "
+        "is about a subpopulation rather than a rate: the collapsed-list nudge "
+        "(--collapse-check) appends nothing to a statement that does not collapse, so a question "
+        "it cannot fire on contributes an identical row to both arms and only spends money. "
+        "Enters the artifact tag as a digest of the set, because a probe set's identity is not "
+        "its count.",
+    )
+    parser.add_argument(
         "--prompt-variant",
         action="append",
         default=[],
@@ -314,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         arm_startup_refusal,
         harness_knobs,
         resume_identity_problem,
+        short_digest,
         truncation_notice,
     )
     from governed_bi.govern.policy import GovernancePolicy
@@ -378,12 +393,29 @@ def main(argv: list[str] | None = None) -> int:
             return 5
 
     dataset_file = args.dataset / "test_final.jsonl"
-    questions = load_questions(
-        dataset_file,
-        schemas=schemas,
-        limit=args.limit,
-        per_schema=args.per_schema,
-    )
+    only_ids = None
+    if args.only_ids is not None:
+        only_ids = [
+            line.strip()
+            for line in args.only_ids.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if not only_ids:
+            print(f"--only-ids: {args.only_ids} names no question", file=sys.stderr)
+            return 2
+    try:
+        questions = load_questions(
+            dataset_file,
+            schemas=schemas,
+            limit=args.limit,
+            per_schema=args.per_schema,
+            only_ids=only_ids,
+        )
+    except ValueError as err:
+        # Loud, and before any model call: the alternative is an arm that runs a smaller
+        # population than its own filename claims.
+        print(f"--only-ids: {err}", file=sys.stderr)
+        return 2
     if questions:
         questions[0].pop("_skipped_uncovered", None)
     # The **whole** population this run covers, taken before --resume narrows `questions` to
@@ -432,11 +464,16 @@ def main(argv: list[str] | None = None) -> int:
     # the auto-named path is what most runs use and the segment is what stops the mix before any
     # guard is consulted.
     collapse_tag = "_collapse" if args.collapse_check else ""
+    # A named subset is a different population, not a smaller sample of one, so it cannot share a
+    # filename with the full arm. The digest and not the count, for `question_subset`'s own stated
+    # reason: "a probe set's identity is not its count" (`eval/provenance.py`). The segment is
+    # absent when --only-ids is, so every existing arm's artifact path is unchanged.
+    subset_tag = f"_ids{len(covered_qids)}-{short_digest(covered_qids)}" if only_ids else ""
     tag = (
         f"{args.model}_{args.effort or 'default'}_top{args.top_n or 'default'}"
         f"_{'embed' if args.embed else 'lexical'}"
         f"{provider_tag}{variant_tag}{reflect_tag}{abstain_tag}{pinned_tag}{certified_tag}"
-        f"{collapse_tag}"
+        f"{collapse_tag}{subset_tag}"
     )
     out_path = args.out or pathlib.Path("runs/eval") / f"live_full_{tag}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)

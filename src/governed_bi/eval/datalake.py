@@ -237,6 +237,7 @@ def load_questions(
     schemas: Iterable[str] | None = None,
     limit: int | None = None,
     per_schema: int | None = None,
+    only_ids: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Test questions, filtered to schemas the corpus actually carries.
 
@@ -252,8 +253,22 @@ def load_questions(
 
     ``per_schema`` caps questions per schema — without it a sample is weighted by whichever
     schema BIRD asked most about, and a per-schema effect reads as an overall one.
+
+    ``only_ids`` names the population exactly, for an arm whose question is about a *subpopulation*
+    rather than a rate. Added 2026-08-24 to price the collapsed-list nudge
+    (``serve/structured_check.py::collapsed_list_suffix``): it appends nothing on a statement that
+    does not collapse, so a question it cannot fire on contributes an identical row to both arms
+    and only spends money. 26 candidate questions instead of 120 is the same measurement.
+
+    **It raises on an id the dataset does not carry**, and that is the whole reason it is a
+    parameter rather than a caller-side filter. A named set that silently comes back short is the
+    defect this repository keeps finding in its own measurements — a typo, or a stale id list
+    against a re-split dataset, would quietly change the population under a name that says
+    otherwise. ``per_schema`` is ignored when it is given, for the same reason: a cap cannot be
+    allowed to narrow a set the caller enumerated.
     """
     allowed = None if schemas is None else {str(s) for s in schemas}
+    wanted = None if only_ids is None else {str(q) for q in only_ids}
     kept: list[dict[str, Any]] = []
     seen_per_schema: dict[str, int] = {}
     skipped_uncovered = 0
@@ -265,10 +280,14 @@ def load_questions(
                 continue
             row = json.loads(line)
             db = str(row.get("db_id") or "")
+            if wanted is not None and str(row.get("question_id")) not in wanted:
+                continue
             if allowed is not None and db not in allowed:
                 skipped_uncovered += 1
                 continue
-            if per_schema is not None and seen_per_schema.get(db, 0) >= per_schema:
+            # Skipped entirely under ``only_ids``: the caller enumerated the set, so a per-schema
+            # cap here would silently return fewer questions than were asked for.
+            if wanted is None and per_schema is not None and seen_per_schema.get(db, 0) >= per_schema:
                 continue
             gold = row.get("sql_rename")
             if not gold:
@@ -287,6 +306,16 @@ def load_questions(
             if limit is not None and len(kept) >= limit:
                 break
 
+    if wanted is not None:
+        missing = sorted(wanted - {q["question_id"] for q in kept})
+        if missing:
+            raise ValueError(
+                f"{len(missing)} requested question id(s) are not in {Path(path).name} (or their "
+                f"schema is outside the corpus, or they carry no `sql_rename`): "
+                f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}. An arm over a "
+                "named set must run that set; returning the rest under the same name would "
+                "change the population silently."
+            )
     if kept:
         kept[0]["_skipped_uncovered"] = skipped_uncovered
     return kept
